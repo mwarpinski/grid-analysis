@@ -1,0 +1,76 @@
+If you are handing me a piece of software designed to calculate shadow prices, constraints, and shift factors in real time, you are speaking my language. As a market maker and asset optimizer pulling the strings behind power brokers, I don't just care about what the price *is* right now—I care about what the price is *about to be* in the next 5-minute dispatch interval, and exactly how much muscle I have to move it.
+
+The real-time market (like ERCOT’s SCED or PJM’s RTD) moves too fast for reactive trading. If a constraint binds, the locational marginal price (LMP) at a specific node can spike from $30 to $5,000 in a heartbeat.
+
+If you are building an end-to-end platform for me, here is exactly what I need from your software to dominate the real-time desk:
+
+---
+
+## 1. The Core Engine: The "What-If" Sensitivity Matrix
+
+I cannot wait for the ISO to publish the actual Locational Marginal Prices (LMPs). I need your engine to calculate the delta of the **Marginal Cost of Congestion (MCC)** before it clears.
+
+The formula your backend must crunch instantly for every relevant node is:
+
+
+$$\text{LMP}_{\text{Node}} = \text{LMP}_{\text{System Lambda}} + \text{MCC}_{\text{Node}} + \text{MCL}_{\text{Node}}$$
+
+Where the congestion component is the sum of all binding constraints:
+
+
+$$\text{MCC}_{\text{Node}} = -\sum_{c \in \text{Constraints}} (\text{Shift Factor}_{\text{Node}, c} \times \text{Shadow Price}_c)$$
+
+### What I need to see:
+
+* **The Exposure Column:** Don't just show me raw Generation Shift Factors (GSFs). Show me **Shift Factor Exposure** ($\text{GSF} \times \text{Shadow Price}$). If a constraint has a massive $2,000 shadow price, even a small 2% shift factor on a node matters immensely to my portfolio.
+* **Dynamic Flow Impact Calculator:** Give me a slider or an input field where I can type: *"If I inject an extra 50 MW at Node A and buy 50 MW at Node B, how much does the flow change on Binding Constraint X?"*
+
+---
+
+## 2. Real-Time Constraint Mapping & Bottleneck Prediction
+
+I need a live visual representation of the grid topology. If a line is running at 98% of its thermal or stability limit, it's a ticking time bomb.
+
+### What I need from the software:
+
+* **Binding vs. Shadowing List:** A clean, auto-refreshing table of every constraint that is currently binding or within 5% of its limit.
+* **Penalty Factor Warnings:** If a constraint is violated, I need to see the ISO's absolute ceiling (the Max Shadow Price or Penalty Factor, like $5,000/MW in some regions) so I know exactly how high the local LMP can explode.
+* **Directional Flow Vectors:** Clearly indicate which way the power is flowing across a cut-plane or interface so I know which nodes *relieve* the congestion (negative shift factors) and which ones *exacerbate* it (positive shift factors).
+
+---
+
+## 3. The "Portfolio Net Leverage" Dashboard
+
+Brokers and market makers manage multi-asset portfolios (virtual trades, physical generation, load obligations, and financial transmission rights). I need a screen that aggregates all of our positions against your calculated shift factors.
+
+### Show me a table formatted like this:
+
+| Asset Name | Type | Node / Hub | Current MW | GSF on Constraint X | Net MW Flow Contribution | Price Risk ($\Delta \$ / \text{MW}$) |
+| --- | --- | --- | --- | --- | --- | --- |
+| **WindFarm_01** | Gen | West_Node | +120 MW | +0.15 (Exacerbates) | +18.0 MW | High Risk (Price dropping) |
+| **Solar_04** | Gen | South_Node | +45 MW | -0.10 (Relieves) | -4.5 MW | Favorable (Price spiking) |
+| **Virtual_Buy** | Paper | Hub_North | -50 MW | +0.02 | -1.0 MW | Negligible |
+
+* **Actionable Insight:** The software should instantly flag: *"Your portfolio is currently contributing 13.5 MW of flow to a binding constraint. If the shadow price hits $1,000, your real-time P&L hits a -$13,500/hr run rate."*
+
+---
+
+## 4. Millisecond APIs and Data Ingestion Pipeline
+
+If your software has beautiful math but takes 3 minutes to run a power flow analysis, it is useless to me in the real-time market.
+
+* **Sub-Minute State Estimator Ingestion:** The software must ingest the ISO’s telemetry, telemetry from third-party grid monitors, and line outage data every 30 to 60 seconds.
+* **API-First Architecture:** Give my quantitative algos direct access to raw JSON streams of your calculated shift factors and shadow prices. I want to feed your calculations straight into our execution algorithms to automatically adjust our bids/offers before the 5-minute clock strikes.
+
+---
+
+## 5. Historical Replay & Backtesting (The "Post-Mortem" Tool)
+
+When the dust settles after a volatile day, the brokers are going to argue about why we got caught on the wrong side of a nodal basis spread.
+
+* Give me a **"DVR-style" replay function**. Let me select a specific date and time (e.g., last Tuesday during a storm) and replay the grid interval-by-interval.
+* I want to see exactly how the shift factors evolved as the ISO took lines out of service, and how your model's predicted shadow prices compared to where the market actually cleared. If your software can prove its predictive accuracy historically, I’ll trust it blindly when the screen turns red.
+
+If you can give me that—pre-calculated shift factor exposure, a portfolio leverage view, and sub-minute speed—you aren't just selling me software; you're handing me a license to print money on the grid.
+
+We need to ensure that are you currently accurately generating the raw topology and line rating data from to feed our models
