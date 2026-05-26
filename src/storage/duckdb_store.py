@@ -19,6 +19,13 @@ queried via DuckDB's native Parquet scanning. This avoids a persistent
 DuckDB file lock, making the store safe to query from multiple processes
 (e.g., Jupyter + server simultaneously).
 
+Retention
+---------
+Daily Parquet files older than RETENTION_DAYS (default 90) are automatically
+pruned once per calendar day when write_interval() is called. 90 days covers
+approximately one quarter of trading data — sufficient for model validation,
+backtesting, and regime analysis.
+
 Usage
 -----
 ::
@@ -29,12 +36,15 @@ Usage
 
     # Query historical constraints
     df = store.query_constraints(start="2024-11-01", end="2024-11-07")
+
+    # Check disk usage and retention status
+    print(store.storage_stats())
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -45,6 +55,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "src" / "data" / "timeseries"
 
+# Files older than this many days are deleted during the daily pruning pass.
+RETENTION_DAYS = 90
+
 
 class DuckDBStore:
     """
@@ -52,14 +65,22 @@ class DuckDBStore:
     analysis platform.
     """
 
-    def __init__(self, data_dir: Path = _DEFAULT_DATA_DIR) -> None:
+    def __init__(
+        self,
+        data_dir: Path = _DEFAULT_DATA_DIR,
+        retention_days: int = RETENTION_DAYS,
+    ) -> None:
         self.data_dir = Path(data_dir)
+        self.retention_days = retention_days
         self._constraints_dir = self.data_dir / "constraints"
         self._lmp_dir = self.data_dir / "lmp"
         self._sf_dir = self.data_dir / "shift_factors"
 
         for d in (self._constraints_dir, self._lmp_dir, self._sf_dir):
             d.mkdir(parents=True, exist_ok=True)
+
+        # Track last pruning run — prune at most once per calendar day
+        self._last_pruned: Optional[datetime] = None
 
     # ------------------------------------------------------------------
     # Writes
@@ -73,6 +94,9 @@ class DuckDBStore:
         """
         Persist a single interval's constraint + LMP data to Parquet.
         Called by the ingest worker after each scrape cycle.
+
+        Also triggers a once-per-day retention pruning pass to delete
+        files older than self.retention_days.
         """
         if constraints_df.empty:
             return
@@ -100,6 +124,9 @@ class DuckDBStore:
                 filename=f"lmp_{date_str}.parquet",
             )
 
+        # Once-per-day retention pruning (runs at most once per calendar day)
+        self._maybe_prune()
+
     def write_shift_factors(
         self,
         sf_df: pd.DataFrame,
@@ -123,6 +150,101 @@ class DuckDBStore:
             directory=self._sf_dir,
             filename=f"shift_factors_{date_str}.parquet",
         )
+
+    # ------------------------------------------------------------------
+    # Retention & Storage Stats
+    # ------------------------------------------------------------------
+
+    def prune_old_files(self) -> dict:
+        """
+        Delete Parquet files whose date suffix is older than retention_days.
+
+        Files are named like ``constraints_YYYYMMDD.parquet`` — the date is
+        parsed directly from the filename, so no file I/O is needed to check
+        age.  The current day's file is always preserved regardless.
+
+        Returns a summary dict: {directory: {"deleted": N, "kept": M, "freed_mb": F}}
+        """
+        cutoff = (datetime.utcnow() - timedelta(days=self.retention_days)).date()
+        today  = datetime.utcnow().date()
+        summary: dict = {}
+
+        for subdir in (self._constraints_dir, self._lmp_dir, self._sf_dir):
+            deleted, kept, freed_bytes = 0, 0, 0
+            for path in sorted(subdir.glob("*.parquet")):
+                # Parse date from filename stem, e.g. "constraints_20240101"
+                parts = path.stem.rsplit("_", 1)
+                if len(parts) != 2:
+                    kept += 1
+                    continue
+                try:
+                    file_date = datetime.strptime(parts[1], "%Y%m%d").date()
+                except ValueError:
+                    kept += 1
+                    continue
+
+                if file_date < cutoff and file_date < today:
+                    freed_bytes += path.stat().st_size
+                    path.unlink()
+                    deleted += 1
+                    logger.info(f"Retention pruner: deleted {path.name} ({file_date})")
+                else:
+                    kept += 1
+
+            summary[subdir.name] = {
+                "deleted": deleted,
+                "kept": kept,
+                "freed_mb": round(freed_bytes / 1_048_576, 2),
+            }
+
+        total_freed = sum(v["freed_mb"] for v in summary.values())
+        if total_freed > 0:
+            logger.info(
+                f"Retention pruning complete: freed {total_freed:.1f} MB "
+                f"(cutoff={cutoff}, retention={self.retention_days} days)"
+            )
+        else:
+            logger.debug(f"Retention pruner: nothing to delete (cutoff={cutoff}).")
+
+        self._last_pruned = datetime.utcnow()
+        return summary
+
+    def storage_stats(self) -> dict:
+        """
+        Return disk usage and file counts for each data subdirectory.
+
+        Useful for the /api/v1/status endpoint and ad-hoc inspection.
+        """
+        stats: dict = {}
+        total_bytes = 0
+        for subdir in (self._constraints_dir, self._lmp_dir, self._sf_dir):
+            files = sorted(subdir.glob("*.parquet"))
+            size  = sum(f.stat().st_size for f in files)
+            total_bytes += size
+            dates = []
+            for f in files:
+                parts = f.stem.rsplit("_", 1)
+                if len(parts) == 2:
+                    try:
+                        dates.append(datetime.strptime(parts[1], "%Y%m%d").date())
+                    except ValueError:
+                        pass
+            stats[subdir.name] = {
+                "file_count": len(files),
+                "size_mb": round(size / 1_048_576, 2),
+                "oldest": str(min(dates)) if dates else None,
+                "newest": str(max(dates)) if dates else None,
+            }
+        stats["total_size_mb"] = round(total_bytes / 1_048_576, 2)
+        stats["retention_days"] = self.retention_days
+        stats["last_pruned"] = str(self._last_pruned) if self._last_pruned else None
+        return stats
+
+    def _maybe_prune(self) -> None:
+        """Run pruning at most once per calendar day."""
+        now = datetime.utcnow()
+        if self._last_pruned is None or self._last_pruned.date() < now.date():
+            self.prune_old_files()
 
     # ------------------------------------------------------------------
     # Queries

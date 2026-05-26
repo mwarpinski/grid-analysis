@@ -50,7 +50,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.api.ingest_worker import ingest_loop, ingest_once
-from src.api.routers import constraints, flow_impact, mcc, shift_factors, websocket
+from src.api.routers import constraints, flow_impact, mcc, shift_factors, validation, websocket
 from src.api.sf_cache import cache
 
 logger = logging.getLogger(__name__)
@@ -134,6 +134,7 @@ app.include_router(shift_factors.router)
 app.include_router(flow_impact.router)
 app.include_router(mcc.router)
 app.include_router(websocket.router)
+app.include_router(validation.router)
 
 # Phase 11 — added when portfolio router is built
 try:
@@ -163,9 +164,11 @@ async def health_check():
 @app.get("/api/v1/status", tags=["meta"])
 async def get_status():
     """
-    Returns the current state of the ingest worker and SF cache.
-    Use this to check if the server is ready to serve trading data.
+    Returns the current state of the ingest worker, SF cache, and on-disk
+    storage. Use this to check if the server is ready to serve trading data.
     """
+    from src.storage.duckdb_store import store
+
     return {
         "ready": cache.is_ready(),
         "last_updated": str(cache.last_updated) if cache.last_updated else None,
@@ -175,6 +178,7 @@ async def get_status():
         "n_solved_pairs": len(cache.solution._flat) if cache.solution else 0,
         "history_constraint_rows": len(cache._constraints_history),
         "history_lmp_rows": len(cache._lmp_history),
+        "storage": store.storage_stats(),
     }
 
 
