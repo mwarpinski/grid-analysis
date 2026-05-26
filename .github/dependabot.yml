@@ -1,0 +1,93 @@
+# .github/dependabot.yml
+#
+# Configures Dependabot for the SPP Congestion Monitor.
+#
+# KEY BEHAVIOUR
+# ─────────────
+# • `allow: dependency-type: direct` — Dependabot will only open PRs for
+#   packages listed directly in pyproject.toml / package.json.
+#   Transitive (indirect) dependency alerts are still shown in the Security
+#   tab, but no automated PRs will be created for them.
+#
+# • `open-pull-requests-limit: 5` — prevents alert storms from flooding the
+#   PR queue.
+#
+# • `groups` — batches related updates into a single PR rather than one per
+#   package (e.g. all FastAPI/uvicorn/starlette in one PR).
+#
+# NOTE: To also dismiss transitive alerts from the Security tab, go to:
+#   GitHub → Security → Dependabot alerts → filter by "Indirect" → Dismiss all
+# GitHub does not support auto-dismissing indirect alerts via config file.
+
+version: 2
+
+updates:
+
+  # ── Python (Poetry / pyproject.toml) ───────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Chicago"
+
+    # Only open PRs for direct dependencies (those in [tool.poetry.dependencies])
+    allow:
+      - dependency-type: "direct"
+
+    # Cap simultaneous open PRs — avoids PR floods on stale repos
+    open-pull-requests-limit: 5
+
+    # Group related packages into single PRs instead of one PR per package
+    groups:
+      fastapi-stack:
+        patterns:
+          - "fastapi"
+          - "uvicorn"
+          - "starlette"
+          - "pydantic*"
+          - "python-multipart"
+          - "websockets"
+
+      data-stack:
+        patterns:
+          - "pandas"
+          - "pyarrow"
+          - "duckdb"
+          - "scipy"
+          - "numpy"
+
+      scraping-stack:
+        patterns:
+          - "requests"
+          - "aiohttp"
+          - "beautifulsoup4"
+          - "selenium"
+          - "webdriver-manager"
+
+      dev-tools:
+        applies-to: version-updates
+        patterns:
+          - "pytest*"
+          - "black"
+          - "isort"
+          - "flake8"
+          - "mypy"
+          - "pip-audit"
+
+    # Ignore packages where we intentionally hold back versions
+    # (add entries here if a major upgrade breaks compatibility)
+    ignore: []
+
+    # Descriptive PR labels for easy triage
+    labels:
+      - "dependencies"
+      - "python"
+
+    reviewers:
+      - "mwarpinski"
+
+    commit-message:
+      prefix: "deps"
+      include: "scope"
