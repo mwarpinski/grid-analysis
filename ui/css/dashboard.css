@@ -310,3 +310,24 @@ html, body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.2); }
+
+/* ── SF Zone Heatmap ─────────────────────────────────────────────────── */
+.leaflet-tooltip-dark {
+  background: rgba(15, 23, 42, 0.95) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  color: #cbd5e1 !important;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+
+@keyframes sf-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(1); }
+  50%       { opacity: 0.50; transform: scale(1.15); }
+}
+
+.sf-heatmap-pulse {
+  animation: sf-pulse 2.4s ease-in-out infinite;
+}

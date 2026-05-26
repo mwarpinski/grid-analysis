@@ -29,18 +29,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ── Constraint select → SF panel ──────────────────────────────────
+  // ── Constraint select → SF panel + zone heatmap ─────────────────────
   window.onConstraintSelect = (name) => {
     // Switch to live panel if not already there
     document.getElementById('panel-live').classList.add('active');
-    loadSFPanel(name);
+    loadSFPanel(name);       // bar chart in SF panel
+    showSFHeatmap(name);     // zone heatmap overlay on map
   };
 
   // ── WebSocket ─────────────────────────────────────────────────────
   openConstraintsWS(
     (msg) => {
-      if (msg.type === 'constraint_update' || msg.type === 'initial_snapshot') {
+    if (msg.type === 'constraint_update' || msg.type === 'initial_snapshot') {
         updateConstraintsTable(msg);
+        if (msg.constraints) updateMapColors(msg.constraints);
         // Update interval label in header
         if (msg.interval) {
           const ts = new Date(msg.interval);

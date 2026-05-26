@@ -1,0 +1,599 @@
+# Implementation Plan — SPP Transmission Congestion Trading Platform
+
+## Context & Architecture
+
+The workspace has three repos that map to three distinct layers:
+
+| Repo | Language | Role |
+|---|---|---|
+| `grid-analysis` | Python | Analytics engine: scrapers, SF solver, registry, pipeline |
+| `mcp` | TypeScript / Express | MCP server skeleton (SSE transport already wired) |
+| `mcp-agent` | Python (lastmile AI) | LLM agent framework — used for constraint resolver & portfolio alerts |
+
+### Target System Architecture
+
+```
+                          ┌─────────────────────────────────┐
+                          │         SPP Portal              │
+                          │  (RTBM BC + LMP, every 5 min)   │
+                          └──────────────┬──────────────────┘
+                                         │ polling
+                          ┌──────────────▼──────────────────┐
+                          │     Ingest Worker (asyncio)     │
+                          │  scrapers → normalizer →        │
+                          │  registry → SF solver →         │
+                          │  DuckDB time-series store       │
+                          └──────────────┬──────────────────┘
+                                         │
+               ┌─────────────────────────▼──────────────────────────┐
+               │              FastAPI Server  (grid-analysis)        │
+               │                                                      │
+               │  REST                   WebSocket / SSE             │
+               │  GET /api/v1/shift-factors   /ws/constraints        │
+               │  GET /api/v1/constraints/live                        │
+               │  POST /api/v1/flow-impact                           │
+               │  POST /api/v1/positions      /ws/portfolio           │
+               │  GET /api/v1/portfolio/risk                         │
+               │  GET /api/v1/replay                                  │
+               └──────────┬─────────────────────────┬───────────────┘
+                           │                         │
+          ┌────────────────▼──────┐     ┌────────────▼───────────────┐
+          │   Trading Dashboard   │     │   Algo Execution Engine    │
+          │   (HTML/JS/Leaflet)   │     │   (quant strategies)       │
+          │   grid-analysis/ui/   │     │   consume JSON stream      │
+          └───────────────────────┘     └────────────────────────────┘
+                                                      │
+                                        ┌─────────────▼──────────────┐
+                                        │   mcp-agent (LLM layer)    │
+                                        │   constraint resolver      │
+                                        │   portfolio alert narration│
+                                        └────────────────────────────┘
+```
+
+---
+
+## Already Built ✅
+
+- **Phase 1–6**: `ShiftFactorCalculator`, `ConstraintNameNormalizer`, `ConstraintRegistry` (SQLite), `ConstraintLocator` (EIA GeoJSON), `Pipeline` CLI
+- **Phase 7**: `sf_exposure`, `compute_mcc()`, `flow_impact()` on `ShiftFactorSolution`
+- **Phase 8**: `RTConstraintsScraper` + `DAConstraintsScraper` capturing `limit_mw`, `monitored_mw`, `pct_of_limit`
+- **Tests**: 70/70 passing
+
+---
+
+## Phase 9 — FastAPI Server
+*Unblocks everything else. ~2–3 days.*
+
+> [!IMPORTANT]
+> This is the critical path. The UI (Phase 10), portfolio engine (Phase 11), and algo feed all depend on this.
+
+### New file: `grid-analysis/src/api/server.py`
+
+FastAPI app with the following router modules:
+
+#### [NEW] `src/api/server.py`
+App factory: creates the FastAPI instance, mounts all routers, starts the ingest worker on startup.
+
+#### [NEW] `src/api/routers/constraints.py`
+```
+GET  /api/v1/constraints/live
+     Returns the latest scraped binding constraint snapshot.
+     Query params: ?state=BINDING&min_pct_of_limit=95
+     Response: [{constraint_name, shadow_price, limit_mw, monitored_mw, pct_of_limit, state}]
+
+GET  /api/v1/constraints/history?start=&end=
+     Returns constraint records from DuckDB for a date range.
+```
+
+#### [NEW] `src/api/routers/shift_factors.py`
+```
+GET  /api/v1/shift-factors?node=X&constraint=Y
+     Returns solved SF + sf_exposure for a node/constraint pair.
+     Response: {node, constraint, shift_factor, shadow_price, sf_exposure}
+
+GET  /api/v1/shift-factors/table?shadow_price[LN_HARBINE]=800
+     Returns full exposure-sorted SF table for given shadow prices.
+```
+
+#### [NEW] `src/api/routers/flow_impact.py`
+```
+POST /api/v1/flow-impact
+     Body: {source_node, sink_node, mw, constraint}
+     Response: {delta_flow_mw, direction: "exacerbates"|"relieves"|"neutral",
+                sf_source, sf_sink, mw_requested}
+```
+
+#### [NEW] `src/api/routers/mcc.py`
+```
+GET  /api/v1/mcc?node=X
+     Computes pre-clearing MCC using latest shadow prices from ingest cache.
+     Response: {node, mcc, shadow_prices_used: [{constraint, shadow_price, contribution}]}
+```
+
+#### [NEW] `src/api/routers/websocket.py`
+```
+WS   /ws/constraints
+     Pushes new constraint snapshot JSON every time ingest worker
+     processes a new RTBM interval. Clients subscribe once, receive
+     push messages without polling.
+     Message: {interval, constraints: [...], timestamp}
+
+WS   /ws/portfolio  (Phase 11 dependency)
+     Pushes recalculated portfolio P&L risk on each new interval.
+```
+
+#### [NEW] `src/api/ingest_worker.py`
+Asyncio background task that runs on server startup:
+```python
+async def ingest_loop():
+    while True:
+        data = await scrape_latest()       # RT constraints + LMPs
+        state = normalize_and_solve(data)  # normalizer + SF cache
+        await store_to_duckdb(state)       # Phase 12
+        await broadcast_to_websockets(state)
+        await asyncio.sleep(SPP_POLL_INTERVAL_SECONDS)  # 290s (just under 5 min)
+```
+
+#### [NEW] `src/api/sf_cache.py`
+In-memory singleton that holds the most recent `ShiftFactorSolution` and latest shadow prices. Avoids re-running the full regression on every API request — only re-solve when a new constraint regime is detected.
+
+### Dependencies to add to pyproject.toml
+```
+fastapi >=0.110
+uvicorn[standard] >=0.27
+websockets >=12.0
+```
+
+### Run command
+```bash
+source .venv/bin/activate
+uvicorn src.api.server:app --reload --port 8000
+```
+
+---
+
+## Phase 10 — Trading Dashboard UI
+*Depends on Phase 9. ~3–4 days.*
+
+Single-page web app in `grid-analysis/ui/`. Plain HTML + vanilla JS + Leaflet.js (no build step required — keeps it fast and avoids JS toolchain complexity).
+
+### New directory: `grid-analysis/ui/`
+
+#### [NEW] `ui/index.html`
+Main entry point. Three-panel layout:
+- **Left**: Live binding constraint table (auto-refreshed via WebSocket)
+- **Center**: Leaflet map with EIA GeoJSON lines, colored by loading %
+- **Right**: Shift factor exposure panel for selected node
+
+#### [NEW] `ui/js/constraints_table.js`
+- Connects to `/ws/constraints`
+- Renders sortable table: `Constraint | Shadow Price | Loading % | ⚡ Alarm`
+- Red row highlight when `pct_of_limit >= 95`
+- `$5,000/MWh` penalty ceiling badge when state = VIOLATED
+
+#### [NEW] `ui/js/grid_map.js`
+- Leaflet map centered on SPP footprint (Kansas/Oklahoma/Nebraska)
+- Loads `spp_only_lines.geojson` as a base layer
+- Colors lines by loading %: green → yellow → red gradient
+- Click on a line → opens SF exposure panel for that constraint
+
+#### [NEW] `ui/js/sf_panel.js`
+- Calls `GET /api/v1/shift-factors/table` for the selected constraint
+- Renders horizontal bar chart: node → sf_exposure (positive = red, negative = green)
+- Directional arrows: ▲ exacerbates, ▼ relieves
+
+#### [NEW] `ui/js/flow_impact_calculator.js`
+- "What-If" form: Source Node, Sink Node, MW slider (0–500 MW)
+- On input: `POST /api/v1/flow-impact` → renders result in real time
+- Output: "Your 50 MW injection from WEST_NODE to HUB_NORTH adds **+12.5 MW** of flow on LN HARBINE - BEATRICE (exacerbates)"
+
+#### FastAPI static file serving
+The FastAPI server serves `ui/` as static files at `/`:
+```python
+app.mount("/", StaticFiles(directory="ui", html=True), name="ui")
+```
+
+---
+
+## Phase 11 — Portfolio Net Leverage Dashboard
+*Depends on Phase 9. ~2 days.*
+
+Implements REQ-3: portfolio P&L risk aggregation.
+
+#### [NEW] `src/api/routers/positions.py`
+```
+POST /api/v1/positions
+     Upload portfolio positions.
+     Body: [{asset_name, asset_type, node, mw_signed}]
+     Stored in SQLite (reuses constraint_registry.db).
+
+GET  /api/v1/positions
+     Returns current position store.
+
+GET  /api/v1/portfolio/risk?constraint=X
+     For each position, computes:
+       net_mw_flow = GSF_node,constraint × mw_signed
+       pnl_risk_rate = net_mw_flow × shadow_price  ($/hr)
+     Returns aggregated table + total portfolio exposure.
+     Also calculates: "Portfolio contributes X MW to constraint Y.
+       At $1,000 shadow price → -$X,000/hr run rate."
+```
+
+#### [NEW] `src/api/models/position.py`
+Pydantic models for position input/output validation.
+
+#### [NEW] `ui/js/portfolio_panel.js`
+- Position upload form (CSV paste or row-by-row entry)
+- Renders the portfolio table from Software_requirements.txt:
+  `Asset | Type | Node | MW | GSF | Net MW Flow | P&L Risk | Direction`
+- Red/green color coding on direction column
+- Bold total row: "Portfolio net: +13.5 MW on LN HARBINE — $13,500/hr at current shadow price"
+
+---
+
+## Phase 12 — DuckDB Time-Series Store + Historical Replay
+*Depends on Phase 9. ~3 days.*
+
+Implements REQ-5: DVR-style replay.
+
+#### [NEW] `src/storage/duckdb_store.py`
+Persistent columnar store using DuckDB. Schema:
+```sql
+-- Constraint snapshots (one row per constraint per interval)
+CREATE TABLE constraint_intervals (
+    interval         TIMESTAMPTZ NOT NULL,
+    constraint_name  VARCHAR NOT NULL,
+    canonical_id     VARCHAR,
+    shadow_price     DOUBLE,
+    limit_mw         DOUBLE,
+    monitored_mw     DOUBLE,
+    pct_of_limit     DOUBLE,
+    state            VARCHAR,
+    PRIMARY KEY (interval, constraint_name)
+);
+
+-- Shift factor snapshots (stored per solve, not per interval)
+CREATE TABLE shift_factor_snapshots (
+    solved_at    TIMESTAMPTZ NOT NULL,
+    node         VARCHAR NOT NULL,
+    constraint   VARCHAR NOT NULL,
+    shift_factor DOUBLE,
+    r2_score     DOUBLE,
+    n_intervals  INTEGER
+);
+
+-- LMP snapshots (MCC component only)
+CREATE TABLE lmp_intervals (
+    interval             TIMESTAMPTZ NOT NULL,
+    settlement_location  VARCHAR NOT NULL,
+    mcc                  DOUBLE,
+    PRIMARY KEY (interval, settlement_location)
+);
+```
+
+Partitioned by date for fast range queries. DuckDB handles this via date-range predicates on `interval` with Parquet files under `src/data/timeseries/`.
+
+#### [NEW] `src/api/routers/replay.py`
+```
+GET /api/v1/replay/intervals?start=2024-11-01T00:00&end=2024-11-01T23:55
+    Returns list of available interval timestamps in range.
+
+GET /api/v1/replay/snapshot?interval=2024-11-01T14:35
+    Returns full constraint state + SF exposure table for that interval.
+    Response: {interval, constraints, shift_factors_at_solve, lmp_snapshot}
+
+GET /api/v1/replay/pnl?start=&end=&positions=[...]
+    Applies position store to historical constraint data interval-by-interval.
+    Returns P&L time series: [{interval, pnl_rate_per_hr, binding_constraints}]
+```
+
+#### [NEW] `ui/js/replay_player.js`
+- Date/time picker + "Play" button
+- Slider to scrub through intervals
+- On each interval: updates map colors, SF panel, and portfolio P&L
+- Speed control: 1x, 5x, 10x replay speed
+
+---
+
+## Phase 13 — Shadow Price Forecasting Model
+*Depends on Phase 12. ~5 days. Highest complexity.*
+
+Implements the "predicted vs. actual" comparison in REQ-5.
+
+Two-tier approach:
+1. **Persistence model** (baseline): `ShadowPrice[t+1] = ShadowPrice[t]` — trivial but surprisingly competitive for 5-min intervals.
+2. **Gradient Boosting model** (production): XGBoost/LightGBM trained on:
+   - Historical shadow prices for the constraint
+   - `pct_of_limit` (loading %)
+   - Hour-of-day, day-of-week
+   - Season / weather proxy (temperature)
+   - Recent price volatility (rolling std)
+
+#### [NEW] `src/analysis/shadow_price_forecaster.py`
+```python
+class ShadowPriceForecaster:
+    def fit(self, constraint_name: str, lookback_days: int = 90) -> None: ...
+    def predict(self, constraint_name: str, horizon_intervals: int = 3) -> pd.DataFrame: ...
+    def backtest(self, constraint_name: str, test_period: ...) -> BacktestResult: ...
+```
+
+#### [NEW] `src/api/routers/forecast.py`
+```
+GET /api/v1/forecast/shadow-price?constraint=X&horizon=3
+    Returns predicted shadow prices for next N intervals.
+    Response: [{interval, predicted_shadow_price, confidence_interval_low, confidence_interval_high}]
+
+GET /api/v1/forecast/accuracy?constraint=X&start=&end=
+    Returns backtest accuracy metrics:
+    {mae, rmse, directional_accuracy, r2}
+```
+
+---
+
+## Phase 14 — LLM Constraint Resolver (mcp-agent integration)
+*Depends on Phase 9 (for the pending_review queue). ~2 days.*
+
+Wires the `mcp-agent` repo into the `grid-analysis` constraint registry workflow. Constraints that hit `source='pending'` in the registry get queued for LLM resolution.
+
+#### [NEW] `src/analysis/llm_constraint_resolver.py`
+```python
+class LLMConstraintResolver:
+    """
+    Uses mcp-agent to resolve ambiguous constraint names.
+    Runs as a background job against the pending_review queue.
+    """
+    async def resolve_pending(self, registry: ConstraintRegistry) -> int:
+        """
+        For each pending constraint, asks the LLM:
+          "This SPP constraint name '{raw_name}' needs to be matched to a
+           physical transmission line. From context clues in the name
+           (substation names, voltage, prefix), what are the from/to
+           substations, voltage class, and equipment type?"
+        Returns number of constraints resolved.
+        """
+```
+
+The mcp-agent `filesystem` server is configured to read the `constraint_registry.db` and GeoJSON files, giving the LLM grounding context for its lookups.
+
+---
+
+## Phase 15 — MCP Server Exposure (TypeScript `mcp` repo)
+*Depends on Phase 9. ~2 days.*
+
+Exposes the grid analysis engine as an MCP server so that any MCP client (Claude Desktop, other agents) can query shift factors, run what-if calculations, and get portfolio risk without knowing the underlying API.
+
+Builds on the existing `mcp/quickstart.ts` Express + SSE skeleton.
+
+#### [MODIFY] `mcp/src/server.ts`
+Register MCP tools:
+```typescript
+server.tool("get_shift_factor",
+  { node: z.string(), constraint: z.string() },
+  async ({ node, constraint }) => {
+    const res = await fetch(`http://localhost:8000/api/v1/shift-factors?node=${node}&constraint=${constraint}`);
+    const data = await res.json();
+    return { content: [{ type: "text", text: JSON.stringify(data) }] };
+  }
+);
+
+server.tool("flow_impact_calculator",
+  { source_node: z.string(), sink_node: z.string(), mw: z.number(), constraint: z.string() },
+  async (args) => { ... }
+);
+
+server.tool("portfolio_risk",
+  { positions: z.array(PositionSchema) },
+  async ({ positions }) => { ... }
+);
+```
+
+---
+
+## Execution Order & Dependencies
+
+```mermaid
+graph TD
+    P9["Phase 9: FastAPI Server"] --> P10["Phase 10: Trading Dashboard UI"]
+    P9 --> P11["Phase 11: Portfolio Engine"]
+    P9 --> P12["Phase 12: DuckDB + Replay"]
+    P9 --> P14["Phase 14: LLM Resolver (mcp-agent)"]
+    P9 --> P15["Phase 15: MCP Server Tools"]
+    P12 --> P13["Phase 13: Shadow Price Forecaster"]
+    P10 --> P11
+    P11 --> P15
+```
+
+## Phased Delivery Timeline
+
+| Phase | Deliverable | Est. Effort |
+|---|---|---|
+| **9** | FastAPI server: REST + WebSocket + ingest worker + SF cache | ~2–3 days |
+| **10** | Trading dashboard: live constraint table + Leaflet map + SF panel + what-if | ~3–4 days |
+| **11** | Portfolio P&L engine: position store + risk aggregation + dashboard panel | ~2 days |
+| **12** | DuckDB time-series store + replay API + replay UI player | ~3 days |
+| **13** | Shadow price forecasting: persistence + gradient boosting | ~5 days |
+| **14** | LLM constraint resolver via mcp-agent | ~2 days |
+| **15** | MCP server tool exposure (TypeScript) | ~2 days |
+
+> [!NOTE]
+> Phase 9 should be built first. All other phases are additive and can be parallelized once the API is running.
+
+## Open Questions
+
+1. **Authentication**: Does the API need auth (API keys, JWT)? Algos consuming the JSON stream need some form of access control.
+2. **SPP Poll Interval**: SPP RTBM publishes every 5 minutes. Should the ingest worker poll every 290 seconds (just under 5 min), or should we scrape on-demand per API request?
+3. **Position Store Persistence**: SQLite in `constraint_registry.db` (co-locate with registry), or a separate `positions.db`?
+4. **UI Framework**: Plain HTML/JS/Leaflet (fast, no build step) vs. a lightweight React app. Given the real-time nature, a React app with proper state management may be cleaner long-term. Preference?
+5. **Forecasting Scope**: Is the shadow price forecaster in scope for the initial launch, or is the DVR replay (historical only, no prediction) sufficient for Phase 12?
+
+
+Ingested from: `Software_requirements.txt`
+
+## What's Already Built vs. What's Needed
+
+### Current State (✅ Built in Phase 1)
+- SPP RT/DA constraint + LMP scrapers (5-min intervals)
+- Constraint name normalizer + canonical registry (SQLite)
+- Shift factor regression solver (`ShiftFactorCalculator`) — cross-interval least-squares
+- Regime analyzer (groups intervals by binding constraint set)
+- EIA GeoJSON → constraint topology mapper
+- End-to-end pipeline CLI (`src/pipeline.py`)
+- 53 passing unit tests
+
+---
+
+## Requirements Gap Analysis
+
+---
+
+### REQ-1: The "What-If" Sensitivity Matrix
+
+> *"I need your engine to calculate the delta of the MCC before it clears."*
+>
+> `MCC_Node = -Σ (SF_Node,c × ShadowPrice_c)`
+
+**Status:** 🟡 Partially built — the math exists, real-time delivery does not.
+
+| Sub-Feature | Status | Notes |
+|---|---|---|
+| Shift factor calculation (SF × SP per node) | ✅ Built | `ShiftFactorCalculator` — but offline/batch only |
+| **Shift Factor Exposure column** (GSF × SP) | ❌ Not built | Simple multiplication, needs output format added |
+| **Real-time MCC prediction** (pre-clearing) | ❌ Not built | Requires live shadow price feed + cached SFs |
+| **Dynamic Flow Impact Calculator** | ❌ Not built | "Inject 50MW at Node A → how much flows on Line X?" — this is a PTDF bilateral query |
+
+#### Engineering Notes
+- **Exposure column** is trivial: add `sf_exposure = shift_factor × shadow_price` to output DataFrame and the API response. Already have all the inputs.
+- **Pre-clearing MCC prediction** requires subscribing to SPP's RTBM price feed (published every 5 minutes at `portal.spp.org`) and applying cached SFs. Latency target: compute in <500ms after each new RTBM publish.
+- **Dynamic Flow Impact**: for a bilateral injection (source node A, sink node B), the line flow change on constraint c is: `ΔFlow_c = (SF_A,c - SF_B,c) × ΔMW`. Our solver already produces SF_A,c and SF_B,c — just need a query endpoint.
+
+---
+
+### REQ-2: Real-Time Constraint Mapping & Bottleneck Prediction
+
+> *"I need a live visual representation of the grid topology."*
+
+**Status:** ❌ Not built (data foundation exists, delivery layer missing)
+
+| Sub-Feature | Status | Notes |
+|---|---|---|
+| EIA GeoJSON line features | ✅ Built | `spp_only_lines.geojson` + `constraint_locator.py` |
+| Constraint ↔ physical line mapping | ✅ Built | `constraint_locator.py` with fuzzy matching |
+| **Auto-refreshing binding constraint table** | ❌ Not built | Need live polling loop + WebSocket push to UI |
+| **% of limit / loading %** | ❌ Not built | Requires thermal limit data — see Topology Note below |
+| **Penalty Factor ceiling** | ❌ Not built | SPP cap = $2,000/MWh for most constraints; needs per-constraint lookup |
+| **Directional flow vectors on map** | ❌ Not built | Needs map UI (Leaflet/Mapbox) + sign convention display |
+
+#### Topology Note (line in `Software_requirements.txt` at end)
+> *"We need to ensure you are accurately generating the raw topology and line rating data."*
+
+**This is the critical missing piece for REQ-2.** We currently have:
+- EIA GeoJSON: physical location of lines ✅
+- SPP binding constraint names ✅
+- Shift factors (PTDFs) per node per constraint ✅
+
+**We do NOT have:**
+- Line thermal ratings (MVA limits) — SPP publishes these in the `Transmission Constraints and Capability (OATT)` reports and in the RTBM binding constraint files as `Limit` and `Monitored Value` columns. These are already in the scraped BC CSVs — we just aren't storing them.
+- Real-time MW flow on each line — comes from state estimator, not published publicly. Best proxy: `Monitored Value` field in RTBM binding constraint CSV.
+- Contingency definitions (N-1 security constraints) — needed for full topology model.
+
+**Action required:** Update `RTConstraintsScraper._process_response()` to capture and store `Limit`, `Monitored Value`, and `% Loading` from each binding constraint row.
+
+---
+
+### REQ-3: Portfolio Net Leverage Dashboard
+
+> *"Aggregate all positions against calculated shift factors."*
+>
+> Table: Asset | Type | Node | MW | GSF | Net MW Flow | P&L Risk
+
+**Status:** ❌ Not built — pure application layer, no backend support yet
+
+| Sub-Feature | Status | Notes |
+|---|---|---|
+| Position input (MW per node) | ❌ Not built | Needs position store (DB table or CSV upload) |
+| GSF lookup per node per constraint | 🟡 Partial | `solution.get(node, constraint)` works but needs REST API |
+| Net MW flow contribution calc | ❌ Not built | `Net_MW = GSF × Position_MW` — trivial once API exists |
+| P&L risk flag (`SP × Net_MW`) | ❌ Not built | `P&L_rate = shadow_price × net_mw_flow` per constraint |
+| Actionable "your portfolio is contributing X MW" alert | ❌ Not built | Aggregation across all positions against one constraint |
+
+#### Engineering Notes
+- All the math is: `P&L_risk_rate = Σ_assets (GSF_node,constraint × MW_position) × ShadowPrice_constraint`
+- The backend needs a **position store** — a simple table: `{asset_name, asset_type, node, mw_signed}`. Could be a CSV upload or a REST POST endpoint.
+- The frontend is a sortable data table with color-coded risk flags.
+
+---
+
+### REQ-4: Millisecond APIs & Data Ingestion Pipeline
+
+> *"Sub-minute ingestion. API-first. Raw JSON streams."*
+
+**Status:** ❌ Not built — architecture design required
+
+| Sub-Feature | Status | Notes |
+|---|---|---|
+| SPP RTBM scraper (5-min batch) | ✅ Built | `RTConstraintsScraper` + `RTBMLMPScraper` |
+| **Sub-60s streaming ingestion loop** | ❌ Not built | Need a daemon process + SPP portal polling |
+| **REST API for shift factors** | ❌ Not built | FastAPI or Flask — `GET /shift-factors?node=X&constraint=Y` |
+| **WebSocket / SSE push for live data** | ❌ Not built | Push new constraint state to connected dashboards |
+| **JSON stream for algo ingestion** | ❌ Not built | `GET /stream/constraints` → newline-delimited JSON |
+
+#### Architecture Recommendation
+```
+SPP Portal (every 5 min)
+    └─→ Ingest Worker (asyncio polling daemon)
+         ├─→ Constraint Normalizer + Registry
+         ├─→ Regime Detector
+         ├─→ Shift Factor Cache (Redis or in-memory dict)
+         └─→ FastAPI server
+              ├─→ REST: GET /api/v1/shift-factors
+              ├─→ REST: GET /api/v1/constraints/live
+              ├─→ REST: GET /api/v1/mcc?node=X
+              ├─→ REST: POST /api/v1/flow-impact  (bilateral what-if)
+              ├─→ WebSocket: /ws/constraints  (push updates)
+              └─→ REST: GET /api/v1/portfolio/risk  (after position upload)
+```
+
+SPP RTBM updates every **5 minutes** — true sub-minute ingestion is only possible with private ISO real-time telemetry feeds (ICCP/SCADA), which are not publicly available for SPP. Realistic target for public data: **<30s latency from SPP publish to our API response**.
+
+---
+
+### REQ-5: Historical Replay & Backtesting ("DVR Mode")
+
+> *"Select a date/time, replay interval-by-interval, compare predicted vs. actual shadow prices."*
+
+**Status:** ❌ Not built — needs time-series storage + replay API
+
+| Sub-Feature | Status | Notes |
+|---|---|---|
+| Historical constraint + LMP data | 🟡 Partial | Scrapers work but no persistent time-series store |
+| **Interval-by-interval replay API** | ❌ Not built | `GET /replay?date=2024-11-01&interval=02:55` |
+| **Predicted vs. actual shadow price comparison** | ❌ Not built | Requires a shadow price forecasting model (ML) |
+| **Shift factor evolution over time** | ❌ Not built | Need to snapshot SF matrix per interval and store it |
+| **P&L attribution by interval** | ❌ Not built | Apply position MW × SF × ΔSP across replay window |
+
+#### Engineering Notes
+- **Storage:** A time-series DB is ideal (TimescaleDB, InfluxDB, or DuckDB columnar). Minimum viable: DuckDB parquet files partitioned by date.
+- **Shadow price forecasting** for "predicted vs. actual" is a significant ML scope — at minimum, a regime-based persistence model (assume next interval = current interval's shadow prices) + a more sophisticated LSTM/gradient boosting model trained on historical intervals.
+- This is the highest-complexity feature. Recommend building the data storage layer first (so historical data accumulates), then the replay API, then the forecasting model.
+
+---
+
+## Proposed Additional Phases
+
+| Phase | Feature | Complexity | Dependencies |
+|---|---|---|---|
+| **Phase 7** | Exposure column + bilateral flow-impact query API | Low | Already have SFs |
+| **Phase 8** | Store `Limit` / `Monitored Value` / `% Loading` from RTBM BC CSVs | Low | Update scraper |
+| **Phase 9** | FastAPI server — shift factor REST + WebSocket endpoints | Medium | Phase 7 |
+| **Phase 10** | Live constraint table UI (React or plain JS, Leaflet map) | Medium | Phase 9 |
+| **Phase 11** | Position store + Portfolio P&L risk aggregation | Medium | Phase 9 |
+| **Phase 12** | DuckDB time-series storage + historical replay API | Medium | Phase 8 |
+| **Phase 13** | Shadow price forecasting model (persistence → ML) | High | Phase 12 |
+| **Phase 14** | LLM constraint resolver (`llm_constraint_resolver.py`) | Medium | Phase 9 |
+| **Phase 15** | DC Powerflow / PTDF matrix (PyPSA) for exact SFs | High | Topology data |
+
+> [!IMPORTANT]
+> **Phase 8 (line ratings) should happen immediately** — SPP already publishes `Limit` and `Monitored Value` in the RTBM BC CSVs that we're already downloading. We're discarding this data. Fixing the scraper to capture it costs ~20 lines of code and unlocks the "% of limit" column needed for REQ-2.
+
+> [!NOTE]
+> **Phases 7 and 8 are the highest ROI / lowest effort items.** They unlock the most visible trader-facing features (exposure column, line loading %) with minimal new code. Recommend doing these next before the API layer.
