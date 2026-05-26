@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SPP Congestion Monitor — QuantShop</title>
+  <meta name="description" content="Real-time SPP transmission congestion monitoring: binding constraints, shift factor exposure, and bilateral flow-impact calculator for RTBM market participants." />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Chart.js for bar charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <link rel="stylesheet" href="css/dashboard.css" />
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header id="site-header">
+  <div class="header-brand">
+    <div class="brand-dot"></div>
+    <span class="brand-name">QuantShop</span>
+    <span class="brand-divider">|</span>
+    <span class="brand-product">SPP Congestion Monitor</span>
+  </div>
+  <div class="header-status">
+    <div id="status-indicator" class="status-dot status-connecting" title="WebSocket status"></div>
+    <span id="status-label" class="status-label">Connecting…</span>
+    <span id="last-interval" class="status-interval"></span>
+  </div>
+  <nav class="header-nav">
+    <button id="nav-live"    class="nav-btn active" data-panel="live">Live</button>
+    <button id="nav-whatif"  class="nav-btn"        data-panel="whatif">What-If</button>
+    <button id="nav-portfolio" class="nav-btn"      data-panel="portfolio">Portfolio</button>
+    <button id="nav-replay"  class="nav-btn"        data-panel="replay">Replay</button>
+  </nav>
+</header>
+
+<!-- ── Main ───────────────────────────────────────────────────────────── -->
+<main id="app-main">
+
+  <!-- ============================================================
+       PANEL: LIVE (default)
+  ============================================================ -->
+  <div id="panel-live" class="app-panel active">
+    <div class="three-col-layout">
+
+      <!-- Left: Binding Constraint Table -->
+      <aside class="col-left glass-panel" id="col-constraints">
+        <div class="panel-header">
+          <h2 class="panel-title">Binding Constraints</h2>
+          <div class="panel-badges">
+            <span id="binding-count" class="badge badge-red">0 binding</span>
+            <span id="near-limit-count" class="badge badge-amber">0 near limit</span>
+          </div>
+        </div>
+
+        <div class="filter-row">
+          <label class="filter-label">Min Shadow Price</label>
+          <input id="filter-min-sp" type="number" class="filter-input" placeholder="0" min="0" step="50" value="0" />
+          <label class="filter-label">Min Loading %</label>
+          <input id="filter-min-pct" type="number" class="filter-input" placeholder="0" min="0" max="200" step="5" value="0" />
+        </div>
+
+        <div id="constraint-table-wrap" class="table-scroll">
+          <table id="constraint-table" class="data-table">
+            <thead>
+              <tr>
+                <th class="sortable" data-col="constraint_name">Constraint <span class="sort-arrow">↕</span></th>
+                <th class="sortable" data-col="shadow_price">Shadow Price <span class="sort-arrow">↕</span></th>
+                <th class="sortable" data-col="pct_of_limit">Loading % <span class="sort-arrow">↕</span></th>
+                <th>State</th>
+              </tr>
+            </thead>
+            <tbody id="constraint-tbody">
+              <tr class="empty-row"><td colspan="4">Waiting for data…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </aside>
+
+      <!-- Center: Leaflet Map -->
+      <section class="col-center glass-panel" id="col-map">
+        <div class="panel-header">
+          <h2 class="panel-title">SPP Grid Topology</h2>
+          <div class="map-legend">
+            <span class="legend-item"><span class="legend-dot" style="background:#22c55e"></span>&lt;70%</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#eab308"></span>70–90%</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#f97316"></span>90–95%</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>&gt;95%</span>
+          </div>
+        </div>
+        <div id="grid-map"></div>
+        <div id="map-tooltip" class="map-tooltip hidden"></div>
+      </section>
+
+      <!-- Right: SF Exposure Panel -->
+      <aside class="col-right glass-panel" id="col-sf">
+        <div class="panel-header">
+          <h2 class="panel-title">Shift Factor Exposure</h2>
+          <span id="sf-constraint-label" class="panel-subtitle">Select a constraint →</span>
+        </div>
+
+        <div id="sf-content">
+          <div class="sf-placeholder">
+            <div class="sf-placeholder-icon">⚡</div>
+            <p>Click a constraint in the table<br/>or a line on the map to view<br/>nodal SF exposure.</p>
+          </div>
+        </div>
+
+        <!-- SF bar chart -->
+        <div id="sf-chart-wrap" class="chart-wrap hidden">
+          <canvas id="sf-chart"></canvas>
+        </div>
+      </aside>
+
+    </div><!-- .three-col-layout -->
+  </div><!-- #panel-live -->
+
+
+  <!-- ============================================================
+       PANEL: WHAT-IF CALCULATOR
+  ============================================================ -->
+  <div id="panel-whatif" class="app-panel">
+    <div class="two-col-layout">
+
+      <div class="glass-panel form-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Bilateral Flow-Impact Calculator</h2>
+          <p class="panel-subtitle-text">
+            Model the MW impact of a bilateral injection on any binding constraint.
+          </p>
+        </div>
+
+        <form id="whatif-form" class="calc-form">
+          <div class="form-group">
+            <label for="wi-source">Source Node (Injection)</label>
+            <input id="wi-source" type="text" class="form-input" placeholder="e.g. WEST_WIND_HUB" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="wi-sink">Sink Node (Withdrawal)</label>
+            <input id="wi-sink" type="text" class="form-input" placeholder="e.g. BEATRICE_HUB" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="wi-mw">MW Injection <span id="wi-mw-label" class="mw-label">50 MW</span></label>
+            <input id="wi-mw" type="range" min="1" max="500" value="50" class="mw-slider" />
+          </div>
+          <div class="form-group">
+            <label for="wi-constraint">Constraint</label>
+            <input id="wi-constraint" type="text" class="form-input" placeholder="e.g. LN HARBINE - BEATRICE" autocomplete="off" />
+          </div>
+          <button id="wi-submit" type="submit" class="btn-primary">Calculate Impact</button>
+        </form>
+      </div>
+
+      <div class="glass-panel result-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Result</h2>
+        </div>
+        <div id="wi-result" class="wi-result-empty">
+          <div class="result-placeholder">
+            <div class="result-placeholder-icon">→</div>
+            <p>Fill out the form and click Calculate.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- #panel-whatif -->
+
+
+  <!-- ============================================================
+       PANEL: PORTFOLIO
+  ============================================================ -->
+  <div id="panel-portfolio" class="app-panel">
+    <div class="two-col-layout">
+
+      <div class="glass-panel form-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Portfolio Positions</h2>
+          <p class="panel-subtitle-text">Paste CSV or enter row-by-row.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="portfolio-csv">Import CSV</label>
+          <textarea id="portfolio-csv" class="form-textarea" rows="6"
+            placeholder="asset_name,asset_type,node,mw_signed&#10;WindFarm_01,gen,WEST_NODE,120&#10;Industrial_Load,load,HUB_NORTH,-85"></textarea>
+          <button id="portfolio-csv-btn" class="btn-secondary">Parse CSV</button>
+        </div>
+
+        <div id="portfolio-rows" class="portfolio-rows">
+          <!-- Dynamic position rows injected here -->
+        </div>
+        <button id="portfolio-add-row" class="btn-ghost">+ Add Row</button>
+
+        <div class="form-group" style="margin-top:1.5rem;">
+          <label for="portfolio-constraint">Evaluate Against Constraint</label>
+          <input id="portfolio-constraint" type="text" class="form-input" placeholder="e.g. LN HARBINE - BEATRICE" />
+        </div>
+        <button id="portfolio-submit" class="btn-primary">Calculate Portfolio Risk</button>
+      </div>
+
+      <div class="glass-panel result-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Portfolio Risk</h2>
+          <div id="portfolio-alert-badge" class="hidden"></div>
+        </div>
+        <div id="portfolio-result" class="wi-result-empty">
+          <div class="result-placeholder">
+            <div class="result-placeholder-icon">📊</div>
+            <p>Upload positions and calculate risk.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- #panel-portfolio -->
+
+
+  <!-- ============================================================
+       PANEL: REPLAY
+  ============================================================ -->
+  <div id="panel-replay" class="app-panel">
+    <div class="glass-panel replay-panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Historical Replay — DVR Mode</h2>
+        <p class="panel-subtitle-text">Scrub through historical constraint intervals interval-by-interval.</p>
+      </div>
+
+      <div class="replay-controls">
+        <div class="form-group">
+          <label for="replay-start">Start</label>
+          <input id="replay-start" type="datetime-local" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label for="replay-end">End</label>
+          <input id="replay-end" type="datetime-local" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label for="replay-constraint">Constraint</label>
+          <input id="replay-constraint" type="text" class="form-input" placeholder="e.g. LN HARBINE - BEATRICE" />
+        </div>
+        <button id="replay-load" class="btn-primary">Load Intervals</button>
+      </div>
+
+      <div id="replay-slider-wrap" class="replay-slider-wrap hidden">
+        <div class="replay-transport">
+          <button id="replay-prev" class="transport-btn" title="Previous">⏮</button>
+          <button id="replay-play" class="transport-btn transport-play" title="Play">▶</button>
+          <button id="replay-next" class="transport-btn" title="Next">⏭</button>
+          <label class="transport-speed">
+            Speed:
+            <select id="replay-speed" class="form-select">
+              <option value="2000">1×</option>
+              <option value="400">5×</option>
+              <option value="200">10×</option>
+            </select>
+          </label>
+          <span id="replay-interval-label" class="replay-ts-label">—</span>
+        </div>
+        <input id="replay-slider" type="range" min="0" value="0" class="replay-scrubber" />
+        <div id="replay-snapshot" class="replay-snapshot-area">
+          <!-- snapshot table injected here -->
+        </div>
+      </div>
+
+    </div>
+  </div><!-- #panel-replay -->
+
+</main>
+
+<!-- Scripts -->
+<script src="js/api.js"></script>
+<script src="js/grid_map.js"></script>
+<script src="js/constraints_table.js"></script>
+<script src="js/sf_panel.js"></script>
+<script src="js/flow_impact_calculator.js"></script>
+<script src="js/portfolio_panel.js"></script>
+<script src="js/replay_player.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>

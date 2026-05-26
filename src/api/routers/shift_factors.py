@@ -85,9 +85,18 @@ async def get_sf_exposure_table(
     if sp is None:
         sp = cache.get_shadow_prices().get(constraint)
 
-    # Build exposure table using the solution's to_dataframe()
-    sp_map = {constraint: sp} if sp is not None else None
+    # Always pass a dict (even empty) so to_dataframe() always returns
+    # named columns (node, constraint, shift_factor). Passing None returns
+    # a bare RangeIndex DataFrame with no columns → KeyError on filter.
+    sp_map = {constraint: sp} if sp is not None else {}
     df = cache.solution.to_dataframe(shadow_prices=sp_map)
+
+    if df.empty or "constraint" not in df.columns:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No shift factors solved yet — solver needs more intervals. "
+                   "Check /api/v1/status for solver readiness."
+        )
 
     # Filter to requested constraint
     df = df[df["constraint"] == constraint]

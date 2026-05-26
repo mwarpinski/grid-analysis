@@ -1,0 +1,3257 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.3,
+            34.6
+          ],
+          [
+            -93.5,
+            32.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKSE_LAN_230",
+        "from_bus": "OK-SE",
+        "to_bus": "LA-N",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -93.5,
+            32.3
+          ],
+          [
+            -92.3,
+            36.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "LAN_ARN_230",
+        "from_bus": "LA-N",
+        "to_bus": "AR-N",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -92.3,
+            36.2
+          ],
+          [
+            -95.3,
+            34.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "ARN_OKSE_230",
+        "from_bus": "AR-N",
+        "to_bus": "OK-SE",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -103.6,
+            34.5
+          ],
+          [
+            -101.7,
+            35.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NME_TXPH_345",
+        "from_bus": "NM-E",
+        "to_bus": "TX-PH",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -101.7,
+            35.1
+          ],
+          [
+            -101.0,
+            37.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "TXPH_KSSW_345",
+        "from_bus": "TX-PH",
+        "to_bus": "KS-SW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -101.0,
+            37.0
+          ],
+          [
+            -103.6,
+            34.5
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSSW_NME_115",
+        "from_bus": "KS-SW",
+        "to_bus": "NM-E",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -103.6,
+            34.5
+          ],
+          [
+            -104.6,
+            41.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NME_WYSE_345",
+        "from_bus": "NM-E",
+        "to_bus": "WY-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -104.6,
+            41.9
+          ],
+          [
+            -105.4,
+            45.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "WYSE_MTSE_345",
+        "from_bus": "WY-SE",
+        "to_bus": "MT-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -104.7,
+            44.6
+          ],
+          [
+            -102.7,
+            46.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "WYNE_NDSW_230",
+        "from_bus": "WY-NE",
+        "to_bus": "ND-SW",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -102.7,
+            46.1
+          ],
+          [
+            -105.4,
+            45.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NDSW_MTSE_230",
+        "from_bus": "ND-SW",
+        "to_bus": "MT-SE",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -105.4,
+            45.7
+          ],
+          [
+            -104.7,
+            44.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MTSE_WYNE_115",
+        "from_bus": "MT-SE",
+        "to_bus": "WY-NE",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -104.7,
+            44.6
+          ],
+          [
+            -103.2,
+            43.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "WYNE_SDSW_115",
+        "from_bus": "WY-NE",
+        "to_bus": "SD-SW",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -103.2,
+            43.2
+          ],
+          [
+            -102.7,
+            46.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "SDSW_NDSW_230",
+        "from_bus": "SD-SW",
+        "to_bus": "ND-SW",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -104.6,
+            41.9
+          ],
+          [
+            -104.7,
+            44.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "WYSE_WYNE_345",
+        "from_bus": "WY-SE",
+        "to_bus": "WY-NE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -104.6,
+            41.9
+          ],
+          [
+            -103.2,
+            43.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "WYSE_SDSW_345",
+        "from_bus": "WY-SE",
+        "to_bus": "SD-SW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -104.6,
+            41.9
+          ],
+          [
+            -102.4,
+            41.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "WYSE_NEW_345",
+        "from_bus": "WY-SE",
+        "to_bus": "NE-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -102.4,
+            41.4
+          ],
+          [
+            -103.2,
+            43.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEW_SDSW_115",
+        "from_bus": "NE-W",
+        "to_bus": "SD-SW",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.0,
+            35.7
+          ],
+          [
+            -97.3,
+            35.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKE_OKC_345",
+        "from_bus": "OK-E",
+        "to_bus": "OK-C",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.3,
+            35.6
+          ],
+          [
+            -95.3,
+            34.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKC_OKSE_345",
+        "from_bus": "OK-C",
+        "to_bus": "OK-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.3,
+            34.6
+          ],
+          [
+            -95.0,
+            35.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKSE_OKE_230",
+        "from_bus": "OK-SE",
+        "to_bus": "OK-E",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -101.7,
+            35.1
+          ],
+          [
+            -99.5,
+            35.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "TXPH_OKW_345",
+        "from_bus": "TX-PH",
+        "to_bus": "OK-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.5,
+            35.2
+          ],
+          [
+            -101.0,
+            37.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKW_KSSW_115",
+        "from_bus": "OK-W",
+        "to_bus": "KS-SW",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.5,
+            35.2
+          ],
+          [
+            -100.0,
+            36.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKW_OKNW_345",
+        "from_bus": "OK-W",
+        "to_bus": "OK-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -100.0,
+            36.9
+          ],
+          [
+            -101.0,
+            37.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKNW_KSSW_345",
+        "from_bus": "OK-NW",
+        "to_bus": "KS-SW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -96.7,
+            45.0
+          ],
+          [
+            -97.3,
+            46.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MNW_NDSE_345",
+        "from_bus": "MN-W",
+        "to_bus": "ND-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.3,
+            46.6
+          ],
+          [
+            -99.2,
+            46.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NDSE_NDC_345",
+        "from_bus": "ND-SE",
+        "to_bus": "ND-C",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.2,
+            46.6
+          ],
+          [
+            -96.7,
+            45.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NDC_MNW_345",
+        "from_bus": "ND-C",
+        "to_bus": "MN-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.2,
+            43.9
+          ],
+          [
+            -96.7,
+            45.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "SDE_MNW_345",
+        "from_bus": "SD-E",
+        "to_bus": "MN-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.2,
+            46.6
+          ],
+          [
+            -97.2,
+            43.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NDC_SDE_345",
+        "from_bus": "ND-C",
+        "to_bus": "SD-E",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -100.0,
+            43.9
+          ],
+          [
+            -97.2,
+            43.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "SDC_SDE_345",
+        "from_bus": "SD-C",
+        "to_bus": "SD-E",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.2,
+            46.6
+          ],
+          [
+            -100.0,
+            43.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NDC_SDC_230",
+        "from_bus": "ND-C",
+        "to_bus": "SD-C",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -100.0,
+            43.9
+          ],
+          [
+            -99.4,
+            41.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "SDC_NEC_230",
+        "from_bus": "SD-C",
+        "to_bus": "NE-C",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.4,
+            41.4
+          ],
+          [
+            -97.2,
+            43.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEC_SDE_345",
+        "from_bus": "NE-C",
+        "to_bus": "SD-E",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -102.7,
+            46.1
+          ],
+          [
+            -100.0,
+            43.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NDSW_SDC_230",
+        "from_bus": "ND-SW",
+        "to_bus": "SD-C",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.2,
+            46.6
+          ],
+          [
+            -102.7,
+            46.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NDC_NDSW_230",
+        "from_bus": "ND-C",
+        "to_bus": "ND-SW",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -103.2,
+            43.2
+          ],
+          [
+            -100.0,
+            43.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "SDSW_SDC_230",
+        "from_bus": "SD-SW",
+        "to_bus": "SD-C",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -102.4,
+            41.4
+          ],
+          [
+            -100.0,
+            43.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEW_SDC_230",
+        "from_bus": "NE-W",
+        "to_bus": "SD-C",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -102.4,
+            41.4
+          ],
+          [
+            -99.4,
+            41.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEW_NEC_230",
+        "from_bus": "NE-W",
+        "to_bus": "NE-C",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -100.0,
+            36.9
+          ],
+          [
+            -100.8,
+            38.8
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKNW_KSW_345",
+        "from_bus": "OK-NW",
+        "to_bus": "KS-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -100.8,
+            38.8
+          ],
+          [
+            -101.0,
+            37.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSW_KSSW_115",
+        "from_bus": "KS-W",
+        "to_bus": "KS-SW",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.1,
+            37.3
+          ],
+          [
+            -94.4,
+            36.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MOSW_ARNW_345",
+        "from_bus": "MO-SW",
+        "to_bus": "AR-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.4,
+            36.2
+          ],
+          [
+            -92.3,
+            36.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "ARNW_ARN_345",
+        "from_bus": "AR-NW",
+        "to_bus": "AR-N",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -92.3,
+            36.2
+          ],
+          [
+            -94.1,
+            37.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "ARN_MOSW_115",
+        "from_bus": "AR-N",
+        "to_bus": "MO-SW",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.4,
+            36.2
+          ],
+          [
+            -95.3,
+            34.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "ARNW_OKSE_345",
+        "from_bus": "AR-NW",
+        "to_bus": "OK-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.4,
+            36.2
+          ],
+          [
+            -95.0,
+            35.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "ARNW_OKE_345",
+        "from_bus": "AR-NW",
+        "to_bus": "OK-E",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.3,
+            35.6
+          ],
+          [
+            -97.7,
+            33.8
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKC_TXS_345",
+        "from_bus": "OK-C",
+        "to_bus": "TX-S",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.7,
+            33.8
+          ],
+          [
+            -95.3,
+            34.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "TXS_OKSE_230",
+        "from_bus": "TX-S",
+        "to_bus": "OK-SE",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.7,
+            33.8
+          ],
+          [
+            -93.5,
+            32.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "TXS_LAN_230",
+        "from_bus": "TX-S",
+        "to_bus": "LA-N",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.7,
+            33.8
+          ],
+          [
+            -103.6,
+            34.5
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "TXS_NME_115",
+        "from_bus": "TX-S",
+        "to_bus": "NM-E",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.7,
+            33.8
+          ],
+          [
+            -101.7,
+            35.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "TXS_TXPH_345",
+        "from_bus": "TX-S",
+        "to_bus": "TX-PH",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.0,
+            36.3
+          ],
+          [
+            -100.0,
+            36.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKNC_OKNW_345",
+        "from_bus": "OK-NC",
+        "to_bus": "OK-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.5,
+            35.2
+          ],
+          [
+            -98.0,
+            36.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKW_OKNC_230",
+        "from_bus": "OK-W",
+        "to_bus": "OK-NC",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -102.4,
+            41.4
+          ],
+          [
+            -101.6,
+            39.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEW_KSNW_345",
+        "from_bus": "NE-W",
+        "to_bus": "KS-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -101.6,
+            39.9
+          ],
+          [
+            -99.4,
+            41.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSNW_NEC_345",
+        "from_bus": "KS-NW",
+        "to_bus": "NE-C",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -101.6,
+            39.9
+          ],
+          [
+            -100.8,
+            38.8
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSNW_KSW_345",
+        "from_bus": "KS-NW",
+        "to_bus": "KS-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -100.8,
+            38.8
+          ],
+          [
+            -99.4,
+            41.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSW_NEC_230",
+        "from_bus": "KS-W",
+        "to_bus": "NE-C",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.5,
+            38.3
+          ],
+          [
+            -100.8,
+            38.8
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSC_KSW_230",
+        "from_bus": "KS-C",
+        "to_bus": "KS-W",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -100.0,
+            36.9
+          ],
+          [
+            -98.5,
+            38.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKNW_KSC_345",
+        "from_bus": "OK-NW",
+        "to_bus": "KS-C",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.4,
+            34.6
+          ],
+          [
+            -97.7,
+            33.8
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKSW_TXS_115",
+        "from_bus": "OK-SW",
+        "to_bus": "TX-S",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.3,
+            35.6
+          ],
+          [
+            -98.4,
+            34.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKC_OKSW_345",
+        "from_bus": "OK-C",
+        "to_bus": "OK-SW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.0,
+            36.3
+          ],
+          [
+            -98.4,
+            34.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKNC_OKSW_230",
+        "from_bus": "OK-NC",
+        "to_bus": "OK-SW",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.3,
+            35.6
+          ],
+          [
+            -98.0,
+            36.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKC_OKNC_345",
+        "from_bus": "OK-C",
+        "to_bus": "OK-NC",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.5,
+            35.2
+          ],
+          [
+            -98.4,
+            34.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKW_OKSW_115",
+        "from_bus": "OK-W",
+        "to_bus": "OK-SW",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -101.7,
+            35.1
+          ],
+          [
+            -98.4,
+            34.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "TXPH_OKSW_345",
+        "from_bus": "TX-PH",
+        "to_bus": "OK-SW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.1,
+            41.4
+          ],
+          [
+            -97.2,
+            43.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEE_SDE_345",
+        "from_bus": "NE-E",
+        "to_bus": "SD-E",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.4,
+            41.4
+          ],
+          [
+            -97.1,
+            41.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEC_NEE_345",
+        "from_bus": "NE-C",
+        "to_bus": "NE-E",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.6,
+            37.0
+          ],
+          [
+            -94.4,
+            36.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSSE_ARNW_345",
+        "from_bus": "KS-SE",
+        "to_bus": "AR-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.1,
+            37.3
+          ],
+          [
+            -95.6,
+            37.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MOSW_KSSE_345",
+        "from_bus": "MO-SW",
+        "to_bus": "KS-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.6,
+            37.1
+          ],
+          [
+            -95.6,
+            37.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKNE_KSSE_345",
+        "from_bus": "OK-NE",
+        "to_bus": "KS-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.1,
+            37.3
+          ],
+          [
+            -95.6,
+            37.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MOSW_OKNE_345",
+        "from_bus": "MO-SW",
+        "to_bus": "OK-NE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.6,
+            37.0
+          ],
+          [
+            -95.0,
+            35.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSSE_OKE_345",
+        "from_bus": "KS-SE",
+        "to_bus": "OK-E",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.6,
+            37.0
+          ],
+          [
+            -97.3,
+            35.6
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSSE_OKC_345",
+        "from_bus": "KS-SE",
+        "to_bus": "OK-C",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.6,
+            37.0
+          ],
+          [
+            -98.0,
+            36.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSSE_OKNC_345",
+        "from_bus": "KS-SE",
+        "to_bus": "OK-NC",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.6,
+            37.1
+          ],
+          [
+            -97.6,
+            37.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKNE_KSWICHI_345",
+        "from_bus": "OK-NE",
+        "to_bus": "KS-WICHI",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.6,
+            37.9
+          ],
+          [
+            -95.6,
+            37.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSWICHI_KSSE_345",
+        "from_bus": "KS-WICHI",
+        "to_bus": "KS-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.6,
+            37.9
+          ],
+          [
+            -98.0,
+            36.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSWICHI_OKNC_345",
+        "from_bus": "KS-WICHI",
+        "to_bus": "OK-NC",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.5,
+            38.3
+          ],
+          [
+            -95.6,
+            37.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MOW_OKNE_345",
+        "from_bus": "MO-W",
+        "to_bus": "OK-NE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.1,
+            37.3
+          ],
+          [
+            -94.5,
+            38.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MOSW_MOW_230",
+        "from_bus": "MO-SW",
+        "to_bus": "MO-W",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -92.3,
+            36.2
+          ],
+          [
+            -94.5,
+            38.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "ARN_MOW_230",
+        "from_bus": "AR-N",
+        "to_bus": "MO-W",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.6,
+            37.1
+          ],
+          [
+            -96.8,
+            38.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "OKNE_KSCE_345",
+        "from_bus": "OK-NE",
+        "to_bus": "KS-CE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -96.8,
+            38.4
+          ],
+          [
+            -97.6,
+            37.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSCE_KSWICHI_345",
+        "from_bus": "KS-CE",
+        "to_bus": "KS-WICHI",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -96.8,
+            38.4
+          ],
+          [
+            -98.5,
+            38.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSCE_KSC_230",
+        "from_bus": "KS-CE",
+        "to_bus": "KS-C",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.5,
+            38.3
+          ],
+          [
+            -97.6,
+            37.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSC_KSWICHI_345",
+        "from_bus": "KS-C",
+        "to_bus": "KS-WICHI",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.5,
+            38.3
+          ],
+          [
+            -96.8,
+            38.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MOW_KSCE_230",
+        "from_bus": "MO-W",
+        "to_bus": "KS-CE",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -102.7,
+            39.4
+          ],
+          [
+            -102.4,
+            41.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "COE_NEW_115",
+        "from_bus": "CO-E",
+        "to_bus": "NE-W",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -104.6,
+            41.9
+          ],
+          [
+            -102.7,
+            39.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "WYSE_COE_345",
+        "from_bus": "WY-SE",
+        "to_bus": "CO-E",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -102.7,
+            39.4
+          ],
+          [
+            -101.6,
+            39.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "COE_KSNW_345",
+        "from_bus": "CO-E",
+        "to_bus": "KS-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -103.6,
+            34.5
+          ],
+          [
+            -102.7,
+            39.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NME_COE_115",
+        "from_bus": "NM-E",
+        "to_bus": "CO-E",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -101.0,
+            37.0
+          ],
+          [
+            -102.7,
+            39.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSSW_COE_115",
+        "from_bus": "KS-SW",
+        "to_bus": "CO-E",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -100.8,
+            38.8
+          ],
+          [
+            -102.7,
+            39.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSW_COE_115",
+        "from_bus": "KS-W",
+        "to_bus": "CO-E",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.5,
+            37.7
+          ],
+          [
+            -98.0,
+            36.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSSC_OKNC_230",
+        "from_bus": "KS-SC",
+        "to_bus": "OK-NC",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.6,
+            37.9
+          ],
+          [
+            -98.5,
+            37.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSWICHI_KSSC_345",
+        "from_bus": "KS-WICHI",
+        "to_bus": "KS-SC",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.5,
+            38.3
+          ],
+          [
+            -98.5,
+            37.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSC_KSSC_230",
+        "from_bus": "KS-C",
+        "to_bus": "KS-SC",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.5,
+            37.7
+          ],
+          [
+            -100.0,
+            36.9
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSSC_OKNW_345",
+        "from_bus": "KS-SC",
+        "to_bus": "OK-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.7,
+            42.1
+          ],
+          [
+            -96.7,
+            45.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "IAW_MNW_345",
+        "from_bus": "IA-W",
+        "to_bus": "MN-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.2,
+            43.9
+          ],
+          [
+            -95.7,
+            42.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "SDE_IAW_345",
+        "from_bus": "SD-E",
+        "to_bus": "IA-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.1,
+            41.4
+          ],
+          [
+            -95.7,
+            42.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEE_IAW_345",
+        "from_bus": "NE-E",
+        "to_bus": "IA-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.1,
+            41.4
+          ],
+          [
+            -96.4,
+            40.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEE_KSNE_345",
+        "from_bus": "NE-E",
+        "to_bus": "KS-NE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -96.4,
+            40.0
+          ],
+          [
+            -95.7,
+            42.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSNE_IAW_345",
+        "from_bus": "KS-NE",
+        "to_bus": "IA-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -95.7,
+            42.1
+          ],
+          [
+            -92.3,
+            36.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "IAW_ARN_115",
+        "from_bus": "IA-W",
+        "to_bus": "AR-N",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.0,
+            40.3
+          ],
+          [
+            -96.8,
+            38.4
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NESE_KSCE_115",
+        "from_bus": "NE-SE",
+        "to_bus": "KS-CE",
+        "voltage_kv": 115,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -96.8,
+            38.4
+          ],
+          [
+            -96.4,
+            40.0
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSCE_KSNE_345",
+        "from_bus": "KS-CE",
+        "to_bus": "KS-NE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -96.4,
+            40.0
+          ],
+          [
+            -97.0,
+            40.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSNE_NESE_345",
+        "from_bus": "KS-NE",
+        "to_bus": "NE-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.1,
+            41.4
+          ],
+          [
+            -97.0,
+            40.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEE_NESE_345",
+        "from_bus": "NE-E",
+        "to_bus": "NE-SE",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.4,
+            41.4
+          ],
+          [
+            -97.0,
+            40.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEC_NESE_230",
+        "from_bus": "NE-C",
+        "to_bus": "NE-SE",
+        "voltage_kv": 230,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.6,
+            39.7
+          ],
+          [
+            -95.7,
+            42.1
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MONW_IAW_345",
+        "from_bus": "MO-NW",
+        "to_bus": "IA-W",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -96.4,
+            40.0
+          ],
+          [
+            -94.6,
+            39.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSNE_MONW_345",
+        "from_bus": "KS-NE",
+        "to_bus": "MO-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -96.8,
+            38.4
+          ],
+          [
+            -94.6,
+            39.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSCE_MONW_345",
+        "from_bus": "KS-CE",
+        "to_bus": "MO-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -94.5,
+            38.3
+          ],
+          [
+            -94.6,
+            39.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "MOW_MONW_345",
+        "from_bus": "MO-W",
+        "to_bus": "MO-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -92.3,
+            36.2
+          ],
+          [
+            -94.6,
+            39.7
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "ARN_MONW_345",
+        "from_bus": "AR-N",
+        "to_bus": "MO-NW",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -96.8,
+            38.4
+          ],
+          [
+            -98.8,
+            39.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSCE_KSNC_345",
+        "from_bus": "KS-CE",
+        "to_bus": "KS-NC",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -98.8,
+            39.2
+          ],
+          [
+            -98.5,
+            38.3
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSNC_KSC_345",
+        "from_bus": "KS-NC",
+        "to_bus": "KS-C",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.0,
+            40.3
+          ],
+          [
+            -98.8,
+            39.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NESE_KSNC_345",
+        "from_bus": "NE-SE",
+        "to_bus": "KS-NC",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -99.4,
+            41.4
+          ],
+          [
+            -98.8,
+            39.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "NEC_KSNC_345",
+        "from_bus": "NE-C",
+        "to_bus": "KS-NC",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -100.8,
+            38.8
+          ],
+          [
+            -98.8,
+            39.2
+          ]
+        ]
+      },
+      "properties": {
+        "constraint_name": "KSW_KSNC_345",
+        "from_bus": "KS-W",
+        "to_bus": "KS-NC",
+        "voltage_kv": 345,
+        "pct_of_limit": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -101.6,
+          39.9
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-NW",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -98.8,
+          39.2
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-NC",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.4,
+          40.0
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-NE",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -100.8,
+          38.8
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-W",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -98.5,
+          38.3
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-C",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.8,
+          38.4
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-CE",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -101.0,
+          37.0
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-SW",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -98.5,
+          37.7
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-SC",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -95.6,
+          37.0
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-SE",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.6,
+          37.9
+        ]
+      },
+      "properties": {
+        "bus_id": "KS-WICHI",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -100.0,
+          36.9
+        ]
+      },
+      "properties": {
+        "bus_id": "OK-NW",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -98.0,
+          36.3
+        ]
+      },
+      "properties": {
+        "bus_id": "OK-NC",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -95.6,
+          37.1
+        ]
+      },
+      "properties": {
+        "bus_id": "OK-NE",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -99.5,
+          35.2
+        ]
+      },
+      "properties": {
+        "bus_id": "OK-W",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.3,
+          35.6
+        ]
+      },
+      "properties": {
+        "bus_id": "OK-C",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -95.0,
+          35.7
+        ]
+      },
+      "properties": {
+        "bus_id": "OK-E",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -98.4,
+          34.6
+        ]
+      },
+      "properties": {
+        "bus_id": "OK-SW",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -95.3,
+          34.6
+        ]
+      },
+      "properties": {
+        "bus_id": "OK-SE",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -102.4,
+          41.4
+        ]
+      },
+      "properties": {
+        "bus_id": "NE-W",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -99.4,
+          41.4
+        ]
+      },
+      "properties": {
+        "bus_id": "NE-C",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.1,
+          41.4
+        ]
+      },
+      "properties": {
+        "bus_id": "NE-E",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.0,
+          40.3
+        ]
+      },
+      "properties": {
+        "bus_id": "NE-SE",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -103.2,
+          43.2
+        ]
+      },
+      "properties": {
+        "bus_id": "SD-SW",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -100.0,
+          43.9
+        ]
+      },
+      "properties": {
+        "bus_id": "SD-C",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.2,
+          43.9
+        ]
+      },
+      "properties": {
+        "bus_id": "SD-E",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -102.7,
+          46.1
+        ]
+      },
+      "properties": {
+        "bus_id": "ND-SW",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -99.2,
+          46.6
+        ]
+      },
+      "properties": {
+        "bus_id": "ND-C",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.3,
+          46.6
+        ]
+      },
+      "properties": {
+        "bus_id": "ND-SE",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -94.6,
+          39.7
+        ]
+      },
+      "properties": {
+        "bus_id": "MO-NW",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -94.5,
+          38.3
+        ]
+      },
+      "properties": {
+        "bus_id": "MO-W",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -94.1,
+          37.3
+        ]
+      },
+      "properties": {
+        "bus_id": "MO-SW",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -94.4,
+          36.2
+        ]
+      },
+      "properties": {
+        "bus_id": "AR-NW",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -92.3,
+          36.2
+        ]
+      },
+      "properties": {
+        "bus_id": "AR-N",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -93.5,
+          32.3
+        ]
+      },
+      "properties": {
+        "bus_id": "LA-N",
+        "voltage_kv": 230
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -101.7,
+          35.1
+        ]
+      },
+      "properties": {
+        "bus_id": "TX-PH",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.7,
+          33.8
+        ]
+      },
+      "properties": {
+        "bus_id": "TX-S",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -103.6,
+          34.5
+        ]
+      },
+      "properties": {
+        "bus_id": "NM-E",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -104.6,
+          41.9
+        ]
+      },
+      "properties": {
+        "bus_id": "WY-SE",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -104.7,
+          44.6
+        ]
+      },
+      "properties": {
+        "bus_id": "WY-NE",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -105.4,
+          45.7
+        ]
+      },
+      "properties": {
+        "bus_id": "MT-SE",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.7,
+          45.0
+        ]
+      },
+      "properties": {
+        "bus_id": "MN-W",
+        "voltage_kv": 345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -95.7,
+          42.1
+        ]
+      },
+      "properties": {
+        "bus_id": "IA-W",
+        "voltage_kv": 115
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -102.7,
+          39.4
+        ]
+      },
+      "properties": {
+        "bus_id": "CO-E",
+        "voltage_kv": 115
+      }
+    }
+  ],
+  "_meta": {
+    "description": "Synthetic SPP grid schematic. Node positions are fuzzed regional centroids (\u00b125 miles), NOT real substation coordinates. Suitable for congestion region visualization only.",
+    "generated_by": "generate_spp_topology.py",
+    "seed": 42
+  }
+}

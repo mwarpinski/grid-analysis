@@ -63,6 +63,33 @@ async def broadcast(message: dict) -> None:
         _ws_connections.discard(ws)
 
 
+async def _scrape_rt_constraints(bc_scraper, now: datetime) -> "pd.DataFrame":
+    """
+    Fetch the most recent RTBM binding constraint data.
+
+    Strategy: try the latest per-interval file, then walk back up to 6
+    intervals (30 min) to account for SPP publication lag (~30-90 s).
+    The daily rollup file only exists after midnight, so we always use
+    the per-interval endpoint during the live trading day.
+    """
+    from datetime import timedelta
+
+    rounded = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
+
+    for offset in range(7):   # 0 … 30 minutes back
+        target = rounded - timedelta(minutes=offset * 5)
+        df = await asyncio.to_thread(bc_scraper.fetch_data, target, "interval")
+        if not df.empty:
+            logger.info(
+                f"RT constraints fetched for interval {target}"
+                + (f" (walked back {offset*5} min)" if offset else "")
+            )
+            return df
+
+    logger.warning("Per-interval RT constraint files unavailable for the past 30 min.")
+    return pd.DataFrame()
+
+
 async def ingest_once() -> bool:
     """
     Run a single scrape → normalize → cache → broadcast cycle.
@@ -75,22 +102,20 @@ async def ingest_once() -> bool:
 
     logger.info("Ingest cycle starting...")
 
-    # ── Step 1: Scrape latest RTBM data ─────────────────────────────────
+    now = datetime.now()
+
+    # ── Step 1: Scrape latest RTBM constraint data (per-interval) ───────
     try:
         bc_scraper = RTConstraintsScraper()
-        today = datetime.now()
-        constraints_df = await asyncio.to_thread(
-            bc_scraper.scrape_day, today
-        )
+        constraints_df = await _scrape_rt_constraints(bc_scraper, now)
     except Exception as e:
         logger.warning(f"RT constraint scrape failed: {e}")
         constraints_df = pd.DataFrame()
 
+    # ── Step 2: Scrape latest RTBM LMP (per-interval) ────────────────────
     try:
         lmp_scraper = RTBMLMPScraper()
-        lmp_df = await asyncio.to_thread(
-            lmp_scraper.scrape_day, today
-        )
+        lmp_df = await asyncio.to_thread(lmp_scraper.fetch_latest_lmps)
     except Exception as e:
         logger.warning(f"RT LMP scrape failed: {e}")
         lmp_df = pd.DataFrame()
