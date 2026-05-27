@@ -331,3 +331,156 @@ html, body {
 .sf-heatmap-pulse {
   animation: sf-pulse 2.4s ease-in-out infinite;
 }
+
+/* ── Phase 13: Forecast Panel ─────────────────────────────────────────── */
+
+/* Constraint list */
+.forecast-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.25rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.forecast-item {
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.forecast-item:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.1);
+}
+.forecast-item.active {
+  background: rgba(56,189,248,0.12);
+  border-color: rgba(56,189,248,0.35);
+}
+
+.forecast-item-name {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.forecast-item-meta {
+  font-size: 0.7rem;
+  color: #64748b;
+  margin-top: 0.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Retrain row */
+.forecast-retrain-row {
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.forecast-retrain-status {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+/* Badges */
+.badge-pill {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 99px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.badge-teal   { background: rgba(20,184,166,0.2);  color: #2dd4bf; }
+.badge-gray   { background: rgba(100,116,139,0.2); color: #94a3b8; }
+.badge-blue   { background: rgba(56,189,248,0.15); color: #38bdf8; font-size: 0.72rem; padding: 0.15rem 0.6rem; border-radius: 4px; }
+
+/* Chart area */
+.forecast-chart-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  padding: 0.5rem;
+}
+.forecast-chart-wrap canvas {
+  width: 100% !important;
+  height: 260px !important;
+}
+
+/* Horizon pills */
+.forecast-horizon-pills {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+}
+.horizon-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.08);
+  min-width: 60px;
+}
+.horizon-pill.pill-binding {
+  border-color: rgba(239,68,68,0.3);
+  background: rgba(239,68,68,0.07);
+}
+.horizon-pill.pill-clear {
+  border-color: rgba(34,197,94,0.2);
+  background: rgba(34,197,94,0.05);
+}
+.pill-time  { font-size: 0.62rem; color: #64748b; margin-bottom: 0.1rem; }
+.pill-price { font-size: 0.72rem; font-weight: 600; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; }
+
+/* Model metadata / comparison panel */
+.forecast-meta-content {
+  margin-bottom: 0.75rem;
+}
+.forecast-comparison {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.comparison-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 0.78rem;
+}
+.comparison-label {
+  color: #64748b;
+  font-size: 0.72rem;
+}
+.comparison-value {
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.comparison-value.highlight {
+  color: #38bdf8;
+  font-weight: 700;
+}
+
+/* Error message */
+.forecast-error {
+  padding: 1rem;
+  color: #ef4444;
+  font-size: 0.78rem;
+  font-family: 'JetBrains Mono', monospace;
+}

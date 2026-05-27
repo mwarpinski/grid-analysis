@@ -25,6 +25,14 @@ REST
     GET  /api/v1/positions                List current positions
     GET  /api/v1/portfolio/risk           Portfolio P&L risk aggregation
 
+    Phase 13 — Price Forecasting
+    GET  /api/v1/forecast/{constraint}          Next-interval shadow price + horizon
+    GET  /api/v1/forecast/{constraint}/horizon  N-step forecast path
+    GET  /api/v1/forecast/all                   All binding constraint forecasts
+    GET  /api/v1/forecast/models                Model registry (MAE, R², fallback flag)
+    POST /api/v1/forecast/retrain               Trigger background retrain (all)
+    POST /api/v1/forecast/retrain/{constraint}  Retrain one model on-demand
+
 WebSocket
     WS   /ws/constraints                  Live constraint push stream
     WS   /ws/portfolio                    Live portfolio P&L stream
@@ -49,8 +57,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.api.forecast_cache import forecast_cache
 from src.api.ingest_worker import ingest_loop, ingest_once
-from src.api.routers import constraints, flow_impact, mcc, shift_factors, validation, websocket
+from src.api.routers import constraints, flow_impact, forecast, mcc, shift_factors, validation, websocket
 from src.api.sf_cache import cache
 
 logger = logging.getLogger(__name__)
@@ -88,15 +97,20 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(ingest_loop(), name="ingest_worker")
     logger.info("Ingest worker task started.")
 
+    # Phase 13 — start forecast model training and background retrain loop
+    logger.info("Starting forecast cache (Phase 13)...")
+    await forecast_cache.startup()
+
     yield  # Server is running
 
-    logger.info("Server shutting down — cancelling ingest worker...")
+    logger.info("Server shutting down — cancelling ingest worker and forecast retrain loop...")
     task.cancel()
     try:
         await task
     except asyncio.CancelledError:
         pass
-    logger.info("Ingest worker stopped.")
+    await forecast_cache.shutdown()
+    logger.info("Ingest worker and forecast retrain loop stopped.")
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +149,7 @@ app.include_router(flow_impact.router)
 app.include_router(mcc.router)
 app.include_router(websocket.router)
 app.include_router(validation.router)
+app.include_router(forecast.router)
 
 # Phase 11 — added when portfolio router is built
 try:

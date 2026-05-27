@@ -26,6 +26,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (target === 'live' && gridMap) {
         setTimeout(() => gridMap.invalidateSize(), 50);
       }
+      // Load forecast models when switching to forecast panel
+      if (target === 'forecast' && typeof window.forecastPanelActivate === 'function') {
+        window.forecastPanelActivate();
+      }
     });
   });
 

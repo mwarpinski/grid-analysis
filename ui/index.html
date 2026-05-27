@@ -35,10 +35,11 @@
     <span id="last-interval" class="status-interval"></span>
   </div>
   <nav class="header-nav">
-    <button id="nav-live"    class="nav-btn active" data-panel="live">Live</button>
-    <button id="nav-whatif"  class="nav-btn"        data-panel="whatif">What-If</button>
-    <button id="nav-portfolio" class="nav-btn"      data-panel="portfolio">Portfolio</button>
-    <button id="nav-replay"  class="nav-btn"        data-panel="replay">Replay</button>
+    <button id="nav-live"     class="nav-btn active" data-panel="live">Live</button>
+    <button id="nav-whatif"   class="nav-btn"        data-panel="whatif">What-If</button>
+    <button id="nav-forecast" class="nav-btn"        data-panel="forecast">Forecast</button>
+    <button id="nav-portfolio" class="nav-btn"       data-panel="portfolio">Portfolio</button>
+    <button id="nav-replay"   class="nav-btn"        data-panel="replay">Replay</button>
   </nav>
 </header>
 
@@ -224,6 +225,102 @@
 
 
   <!-- ============================================================
+       PANEL: FORECAST (Phase 13)
+  ============================================================ -->
+  <div id="panel-forecast" class="app-panel">
+    <div class="three-col-layout">
+
+      <!-- Left: constraint selector + model registry -->
+      <aside class="col-left glass-panel" id="col-forecast-constraints">
+        <div class="panel-header">
+          <h2 class="panel-title">Constraint Forecasts</h2>
+          <span id="forecast-model-count" class="badge badge-blue">0 models</span>
+        </div>
+
+        <div id="forecast-constraint-list" class="forecast-list">
+          <div class="sf-placeholder">
+            <div class="sf-placeholder-icon">🔮</div>
+            <p>Loading forecast models…</p>
+          </div>
+        </div>
+
+        <div class="forecast-retrain-row">
+          <button id="forecast-retrain-btn" class="btn-secondary btn-sm">↺ Retrain All</button>
+          <span id="forecast-retrain-status" class="forecast-retrain-status"></span>
+        </div>
+      </aside>
+
+      <!-- Center: price path chart -->
+      <section class="col-center glass-panel" id="col-forecast-chart">
+        <div class="panel-header">
+          <h2 class="panel-title">Shadow Price Forecast</h2>
+          <span id="forecast-constraint-label" class="panel-subtitle">Select a constraint →</span>
+        </div>
+
+        <div id="forecast-chart-placeholder" class="sf-placeholder">
+          <div class="sf-placeholder-icon">📈</div>
+          <p>Select a constraint on the left<br/>to view its price forecast.</p>
+        </div>
+
+        <!-- Chart area -->
+        <div id="forecast-chart-wrap" class="forecast-chart-wrap hidden">
+          <canvas id="forecast-chart"></canvas>
+        </div>
+
+        <!-- Horizon summary row -->
+        <div id="forecast-horizon-pills" class="forecast-horizon-pills hidden"></div>
+      </section>
+
+      <!-- Right: stats + model info -->
+      <aside class="col-right glass-panel" id="col-forecast-meta">
+        <div class="panel-header">
+          <h2 class="panel-title">Model Info</h2>
+        </div>
+        <div id="forecast-meta-content" class="forecast-meta-content">
+          <div class="sf-placeholder">
+            <div class="sf-placeholder-icon">🤖</div>
+            <p>Model metadata will appear here.</p>
+          </div>
+        </div>
+
+        <!-- Current vs predicted comparison -->
+        <div id="forecast-comparison" class="forecast-comparison hidden">
+          <div class="comparison-row">
+            <span class="comparison-label">Current Shadow Price</span>
+            <span id="fc-current-sp" class="comparison-value">—</span>
+          </div>
+          <div class="comparison-row">
+            <span class="comparison-label">Next Interval Forecast</span>
+            <span id="fc-next-sp" class="comparison-value highlight">—</span>
+          </div>
+          <div class="comparison-row">
+            <span class="comparison-label">Direction</span>
+            <span id="fc-direction" class="comparison-value">—</span>
+          </div>
+          <div class="comparison-row">
+            <span class="comparison-label">Model Type</span>
+            <span id="fc-model-type" class="comparison-value">—</span>
+          </div>
+          <div class="comparison-row">
+            <span class="comparison-label">Holdout MAE</span>
+            <span id="fc-mae" class="comparison-value">—</span>
+          </div>
+          <div class="comparison-row">
+            <span class="comparison-label">Holdout R²</span>
+            <span id="fc-r2" class="comparison-value">—</span>
+          </div>
+          <div class="comparison-row">
+            <span class="comparison-label">Training Rows</span>
+            <span id="fc-n-rows" class="comparison-value">—</span>
+          </div>
+        </div>
+      </aside>
+
+    </div>
+  </div><!-- #panel-forecast -->
+
+
+  <!-- ============================================================
        PANEL: REPLAY
   ============================================================ -->
   <div id="panel-replay" class="app-panel">
@@ -283,6 +380,7 @@
 <script src="js/flow_impact_calculator.js"></script>
 <script src="js/portfolio_panel.js"></script>
 <script src="js/replay_player.js"></script>
+<script src="js/forecast_panel.js"></script>
 <script src="js/app.js"></script>
 
 </body>

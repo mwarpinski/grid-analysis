@@ -2,49 +2,45 @@
 backfill_history.py
 ====================
 Backfills the last N days of SPP RTBM binding constraint and LMP data
-into the DuckDB Parquet store.
+into the Parquet store.
 
-SPP keeps per-interval files publicly available on their portal for at
-least 60-90 days (sometimes longer). This script iterates over every
-5-minute interval in the requested range, fetches the two CSV files
-per interval (BC + LMP), and writes them to the Parquet store —
-skipping intervals that are already stored.
+Data availability on SPP portal
+---------------------------------
+- **BC (binding constraints)**: SPP only publishes live per-interval BC files
+  for the *current day*. For historical dates, use the daily aggregate file:
+    RTBM-DAILY-BC-YYYYMMDD.csv  →  1 file per day, all 288 intervals combined
+  These are available under By_Day/ and are retained for ~90 days.
+
+- **LMP**: SPP publishes per-interval LMP files for historical dates:
+    RTBM-LMP-SL-YYYYMMDDhhmm.csv  →  288 files per day
+  Note: intervals start at 00:05, not 00:00 (SPP convention).
+
+Strategy
+--------
+  1. Fetch 1 daily BC file per day  (fast — ~1 request/day)
+  2. Fetch per-interval LMP files   (288 requests/day — rate limited)
 
 Design principles
 -----------------
-- ONE request at a time (concurrency=1) with a 5-second base delay + ±20%
-  random jitter. This gives ~1 req/6s = ~10 req/min — well under any
-  reasonable rate limit for a public data portal.
-- Exponential backoff on HTTP errors: 10s → 20s → 40s → 80s (max 4 retries).
-- Checkpoint file (.backfill_checkpoint) tracks the last completed interval
-  so the job resumes exactly where it left off if you stop/restart.
-- At default settings, 90 days takes approximately 36-48 hours.
-  This is intentional — do not rush public data scraping.
+- ONE request at a time with a 2-second base delay + ±20% random jitter.
+- Exponential backoff on HTTP errors.
+- Checkpoint file tracks the last completed day so the job resumes after restart.
+- Skips days that already have Parquet files.
 
 Usage
 -----
-    # Backfill last 90 days (default, very polite)
-    python scripts/backfill_history.py
+    # Backfill last 21 days (3 full weeks — good day-of-week seasonality)
+    python scripts/backfill_history.py --days 21
 
     # Backfill a specific range
-    python scripts/backfill_history.py --start 2026-03-01 --end 2026-05-01
+    python scripts/backfill_history.py --start 2026-05-01 --end 2026-05-25
 
-    # Dry run — show what would be fetched without downloading
+    # Dry run
     python scripts/backfill_history.py --dry-run
 
-    # Resume from checkpoint after an interruption
-    python scripts/backfill_history.py  # (checkpoint is loaded automatically)
-
-    # Slightly faster if you're comfortable (still very polite)
-    python scripts/backfill_history.py --delay 2.0
-
-Rate estimates
---------------
-  delay=5.0s (default) : ~1 req/6s → 90 days ≈ 36-48 hours
-  delay=2.0s           : ~1 req/3s → 90 days ≈ 18-24 hours
-  delay=1.0s           : ~1 req/2s → 90 days ≈ 9-12 hours  (watch closely)
-
-DO NOT set concurrency > 2 or delay < 0.5 for SPP's public portal.
+Rate estimates (LMP-dominated)
+---------------------------------
+  21 days × 288 intervals × ~2.5s/request ≈ ~4.2 hours
 """
 
 from __future__ import annotations
@@ -55,11 +51,9 @@ import json
 import logging
 import random
 import sys
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
+from datetime import datetime, timedelta, timezone, date as date_type
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import pandas as pd
 
@@ -70,6 +64,8 @@ from src.scrapers.spp_rt_constraints_scraper import RTConstraintsScraper
 from src.scrapers.spp_rtlmp_scraper import RTBMLMPScraper
 from src.storage.duckdb_store import DuckDBStore
 
+UTC = timezone.utc
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -78,45 +74,45 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Interval generation
-# ---------------------------------------------------------------------------
-
-def generate_intervals(start: datetime, end: datetime) -> list[datetime]:
-    """
-    Generate every 5-minute interval timestamp between start and end (inclusive).
-    Intervals are rounded down to the nearest 5-minute mark.
-    """
-    intervals = []
-    current = start.replace(minute=(start.minute // 5) * 5, second=0, microsecond=0)
-    while current <= end:
-        intervals.append(current)
-        current += timedelta(minutes=5)
-    return intervals
-
-
-def already_stored(store: DuckDBStore, date: datetime.date) -> bool:
-    """
-    Returns True if we already have constraint data for this calendar date.
-    Checks for existence of the daily Parquet file rather than querying DuckDB
-    (much faster for the skip check during backfill).
-    """
-    parquet_path = store._constraints_dir / f"constraints_{date.strftime('%Y%m%d')}.parquet"
-    return parquet_path.exists()
-
-
-# ---------------------------------------------------------------------------
-# Async fetch helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
 CHECKPOINT_FILE = Path("src/data/.backfill_checkpoint")
 
 
+def generate_days(start: date_type, end: date_type) -> List[date_type]:
+    """Return every calendar date in [start, end]."""
+    days = []
+    current = start
+    while current <= end:
+        days.append(current)
+        current += timedelta(days=1)
+    return days
+
+
+def generate_lmp_intervals(day: date_type) -> List[datetime]:
+    """
+    Return all 288 RTBM interval timestamps for a calendar day.
+    SPP intervals run 00:05 → 23:55 (5-min steps, no 00:00 file).
+    """
+    intervals = []
+    base = datetime(day.year, day.month, day.day, 0, 5)
+    for i in range(288):
+        intervals.append(base + timedelta(minutes=5 * i))
+    return intervals
+
+
+def already_stored(store: DuckDBStore, day: date_type) -> bool:
+    """True if a daily Parquet file already exists for this date."""
+    parquet_path = store._constraints_dir / f"constraints_{day.strftime('%Y%m%d')}.parquet"
+    return parquet_path.exists()
+
+
 def load_checkpoint() -> Optional[str]:
-    """Return the ISO timestamp of the last completed interval, or None."""
     if CHECKPOINT_FILE.exists():
         try:
             data = json.loads(CHECKPOINT_FILE.read_text())
-            ts = data.get("last_completed")
+            ts = data.get("last_completed_day")
             if ts:
                 logger.info(f"Checkpoint found — resuming after {ts}")
             return ts
@@ -125,59 +121,76 @@ def load_checkpoint() -> Optional[str]:
     return None
 
 
-def save_checkpoint(interval: datetime) -> None:
-    """Persist the last successfully completed interval timestamp."""
+def save_checkpoint(day: date_type) -> None:
     CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
     CHECKPOINT_FILE.write_text(json.dumps({
-        "last_completed": interval.isoformat(),
+        "last_completed_day": day.isoformat(),
         "saved_at": datetime.now(UTC).isoformat(),
     }))
 
 
 def clear_checkpoint() -> None:
-    """Remove checkpoint after a successful full run."""
     if CHECKPOINT_FILE.exists():
         CHECKPOINT_FILE.unlink()
 
 
-async def fetch_interval(
-    bc_scraper: RTConstraintsScraper,
-    lmp_scraper: RTBMLMPScraper,
+# ---------------------------------------------------------------------------
+# Fetch helpers
+# ---------------------------------------------------------------------------
+
+async def fetch_daily_bc(
+    scraper: RTConstraintsScraper,
+    day: date_type,
+    max_retries: int = 3,
+) -> pd.DataFrame:
+    """
+    Fetch the daily aggregate BC file for one calendar day.
+    Returns empty DataFrame on failure (404 or repeated errors).
+    """
+    day_dt = datetime(day.year, day.month, day.day)
+    backoff = 5.0
+    for attempt in range(max_retries + 1):
+        try:
+            df = await asyncio.to_thread(scraper.fetch_data, day_dt, "day")
+            if not df.empty:
+                logger.info(f"  BC {day}: {len(df)} rows fetched")
+            return df
+        except Exception as e:
+            if "404" in str(e):
+                logger.warning(f"  BC {day}: 404 — daily file not available (skipping BC)")
+                return pd.DataFrame()
+            if attempt == max_retries:
+                logger.warning(f"  BC {day}: gave up after {max_retries} retries — {e}")
+                return pd.DataFrame()
+            wait = backoff * (2 ** attempt) * random.uniform(0.8, 1.2)
+            logger.warning(f"  BC {day}: error (attempt {attempt+1}) — {e}. Retrying in {wait:.0f}s")
+            await asyncio.sleep(wait)
+    return pd.DataFrame()
+
+
+async def fetch_lmp_interval(
+    scraper: RTBMLMPScraper,
     interval: datetime,
-    semaphore: asyncio.Semaphore,
     delay: float,
-    max_retries: int = 4,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Fetch BC + LMP for a single interval under the shared semaphore.
-
-    - Adds ±20% random jitter to the delay so requests don't look robotic.
-    - Retries up to max_retries times with exponential backoff on errors.
-    - Returns (constraints_df, lmp_df) — either may be empty on 404 (normal).
-    """
+    semaphore: asyncio.Semaphore,
+    max_retries: int = 2,
+) -> pd.DataFrame:
+    """Fetch one 5-minute LMP interval file with rate limiting."""
     async with semaphore:
-        # Jittered delay: base ± 20%
-        jitter = delay * random.uniform(0.8, 1.2)
-        await asyncio.sleep(jitter)
-
-        backoff = 10.0  # seconds, doubles on each retry
+        await asyncio.sleep(delay * random.uniform(0.8, 1.2))
+        backoff = 5.0
         for attempt in range(max_retries + 1):
             try:
-                bc_df  = await asyncio.to_thread(bc_scraper.fetch_data,  interval, "interval")
-                lmp_df = await asyncio.to_thread(lmp_scraper.fetch_data, interval, "interval")
-                return bc_df, lmp_df
+                df = await asyncio.to_thread(scraper.fetch_data, interval, "interval")
+                return df
             except Exception as e:
+                if "404" in str(e):
+                    return pd.DataFrame()   # interval simply doesn't exist
                 if attempt == max_retries:
-                    logger.warning(f"  {interval}: gave up after {max_retries} retries — {e}")
-                    return pd.DataFrame(), pd.DataFrame()
-                wait = backoff * (2 ** attempt)
-                logger.warning(
-                    f"  {interval}: fetch error (attempt {attempt+1}/{max_retries}) — "
-                    f"{e}. Backing off {wait:.0f}s ..."
-                )
-                await asyncio.sleep(wait)
-
-    return pd.DataFrame(), pd.DataFrame()
+                    logger.debug(f"  LMP {interval}: gave up — {e}")
+                    return pd.DataFrame()
+                await asyncio.sleep(backoff * (2 ** attempt))
+    return pd.DataFrame()
 
 
 # ---------------------------------------------------------------------------
@@ -185,192 +198,131 @@ async def fetch_interval(
 # ---------------------------------------------------------------------------
 
 async def backfill(
-    start: datetime,
-    end: datetime,
+    start: date_type,
+    end: date_type,
     store: DuckDBStore,
-    concurrency: int = 1,
-    delay: float = 5.0,
+    delay: float = 2.0,
     dry_run: bool = False,
-    skip_existing_days: bool = True,
+    skip_existing: bool = True,
 ) -> None:
-    """
-    Async backfill loop — fetches and stores all intervals in [start, end].
-
-    Parameters
-    ----------
-    start, end      : datetime range to backfill (inclusive)
-    store           : DuckDBStore instance to write to
-    concurrency     : max simultaneous HTTP requests to SPP portal
-    delay           : seconds to sleep between requests (per-slot)
-    dry_run         : if True, only log what would be fetched — no downloads
-    skip_existing_days : if True, skip calendar days that already have a Parquet file
-    """
-    intervals = generate_intervals(start, end)
-    total = len(intervals)
-    est_hours = (total * (delay * 1.2 + 2)) / 3600  # rough estimate
-    logger.info(f"Backfill range: {start.date()} → {end.date()}")
-    logger.info(f"Total intervals: {total:,}  ({total * 2:,} HTTP requests)")
-    logger.info(f"Concurrency: {concurrency}  Delay: {delay}s ±20% jitter")
-    logger.info(f"Estimated time: {est_hours:.1f} hours (at default settings)")
+    all_days = generate_days(start, end)
+    logger.info(f"Backfill range: {start} → {end}  ({len(all_days)} days)")
 
     if dry_run:
         logger.info("DRY RUN — no data will be downloaded.")
-        for iv in intervals[:5]:
-            logger.info(f"  Would fetch: {iv}")
-        if total > 5:
-            logger.info(f"  ... and {total - 5:,} more.")
-        logger.info(f"Checkpoint file: {CHECKPOINT_FILE}")
+        for d in all_days[:5]:
+            logger.info(f"  Would fetch BC(1 req) + LMP(288 req) for {d}")
+        if len(all_days) > 5:
+            logger.info(f"  ... and {len(all_days) - 5} more days")
+        est = len(all_days) * 288 * (delay * 1.1) / 3600
+        logger.info(f"  Estimated time: {est:.1f} hours")
         return
 
-    # Resume from checkpoint if available
-    checkpoint_ts = load_checkpoint()
-    if checkpoint_ts:
-        resume_after = datetime.fromisoformat(checkpoint_ts)
-        intervals = [iv for iv in intervals if iv > resume_after]
-        logger.info(f"Resuming: {len(intervals):,} intervals remaining after checkpoint.")
+    # Resume from checkpoint
+    checkpoint = load_checkpoint()
+    if checkpoint:
+        resume_after = date_type.fromisoformat(checkpoint)
+        all_days = [d for d in all_days if d > resume_after]
+        logger.info(f"Resuming: {len(all_days)} days remaining")
 
-    # Skip days that already have full Parquet files
-    if skip_existing_days:
-        skipped_days: set[datetime.date] = set()
+    # Skip already-stored days
+    if skip_existing:
+        skipped = []
         filtered = []
-        for iv in intervals:
-            day = iv.date()
-            if day in skipped_days:
-                continue
-            if already_stored(store, day):
-                skipped_days.add(day)
-                logger.info(f"Skipping {day} — Parquet already exists.")
-                continue
-            filtered.append(iv)
-        intervals = filtered
-        if skipped_days:
-            logger.info(f"Skipped {len(skipped_days)} existing day(s). "
-                        f"Remaining: {len(intervals):,} intervals.")
+        for d in all_days:
+            if already_stored(store, d):
+                skipped.append(d)
+            else:
+                filtered.append(d)
+        if skipped:
+            logger.info(f"Skipping {len(skipped)} day(s) already in Parquet store")
+        all_days = filtered
 
-    if not intervals:
-        logger.info("Nothing to backfill — all intervals already stored.")
+    if not all_days:
+        logger.info("Nothing to backfill — all days already stored.")
         return
 
-    # Scrapers (stateless — safe to reuse across concurrent tasks)
+    est = len(all_days) * 288 * (delay * 1.1) / 3600
+    logger.info(f"{len(all_days)} days to fetch. Estimated time: {est:.1f} hours")
+
     bc_scraper  = RTConstraintsScraper()
     lmp_scraper = RTBMLMPScraper()
-    semaphore   = asyncio.Semaphore(concurrency)
+    semaphore   = asyncio.Semaphore(1)   # 1 concurrent request — polite
 
-    # Column normalization (mirrors ingest_worker.py)
     col_rename = {
-        "Constraint Name":   "constraint_name",
-        "Shadow Price":      "shadow_price",
-        "Interval":          "interval",
+        "Constraint Name":     "constraint_name",
+        "Shadow Price":        "shadow_price",
+        "Interval":            "interval",
         "Settlement Location": "settlement_location",
-        "MCC":               "mcc",
+        "MCC":                 "mcc",
     }
 
-    # Progress tracking
-    done = 0
-    ok_bc = 0
-    ok_lmp = 0
-    miss_bc = 0
-    miss_lmp = 0
+    total_days = len(all_days)
+    for idx, day in enumerate(all_days, 1):
+        logger.info(f"[{idx}/{total_days}] Fetching {day} ...")
 
-    # Process in day-sized batches so we can write a Parquet per day
-    # and show clean progress
-    from itertools import groupby
-    from datetime import date as date_type
+        # ── 1. Daily BC aggregate (1 request) ───────────────────────────
+        bc_df = await fetch_daily_bc(bc_scraper, day)
+        if not bc_df.empty:
+            bc_df = bc_df.rename(columns={
+                k: v for k, v in col_rename.items() if k in bc_df.columns
+            })
+            bc_df.columns = [c.lower() for c in bc_df.columns]
+            if "interval" in bc_df.columns:
+                bc_df["interval"] = pd.to_datetime(bc_df["interval"], errors="coerce")
+            store.write_interval(bc_df)
+            logger.info(f"  → BC stored: {len(bc_df)} rows")
+        else:
+            logger.warning(f"  → BC: no data for {day}")
 
-    def day_key(iv: datetime) -> date_type:
-        return iv.date()
-
-    for day, day_intervals in groupby(intervals, key=day_key):
-        day_intervals_list = list(day_intervals)
-        logger.info(f"Fetching {day}  ({len(day_intervals_list)} intervals) ...")
-
+        # ── 2. Per-interval LMP (288 requests) ──────────────────────────
+        intervals = generate_lmp_intervals(day)
         tasks = [
-            fetch_interval(bc_scraper, lmp_scraper, iv, semaphore, delay)
-            for iv in day_intervals_list
+            fetch_lmp_interval(lmp_scraper, iv, delay, semaphore)
+            for iv in intervals
         ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks)
 
-        day_bc_frames  = []
-        day_lmp_frames = []
-
-        for iv, result in zip(day_intervals_list, results):
-            if isinstance(result, Exception):
-                logger.debug(f"  {iv}: error — {result}")
-                miss_bc += 1
-                miss_lmp += 1
-                continue
-
-            bc_df, lmp_df = result
-
-            if not bc_df.empty:
-                bc_df = bc_df.rename(
-                    columns={k: v for k, v in col_rename.items() if k in bc_df.columns}
-                )
-                if "interval" not in bc_df.columns:
-                    bc_df["interval"] = iv
-                day_bc_frames.append(bc_df)
-                ok_bc += 1
+        lmp_frames = []
+        ok = miss = 0
+        for iv, df in zip(intervals, results):
+            if df is not None and not df.empty:
+                df = df.rename(columns={
+                    k: v for k, v in col_rename.items() if k in df.columns
+                })
+                df.columns = [c.lower() for c in df.columns]
+                if "interval" not in df.columns:
+                    df["interval"] = iv
+                else:
+                    df["interval"] = pd.to_datetime(df["interval"], errors="coerce")
+                lmp_frames.append(df)
+                ok += 1
             else:
-                miss_bc += 1
+                miss += 1
 
-            if not lmp_df.empty:
-                lmp_df = lmp_df.rename(
-                    columns={k: v for k, v in col_rename.items() if k in lmp_df.columns}
-                )
-                if "interval" not in lmp_df.columns:
-                    lmp_df["interval"] = iv
-                day_lmp_frames.append(lmp_df)
-                ok_lmp += 1
-            else:
-                miss_lmp += 1
+        if lmp_frames:
+            combined_lmp = pd.concat(lmp_frames, ignore_index=True)
+            empty_bc = pd.DataFrame(columns=["interval", "constraint_name"])
+            store.write_interval(empty_bc, lmp_df=combined_lmp)
+            logger.info(f"  → LMP stored: {ok} intervals ({len(combined_lmp):,} rows), {miss} missed")
+        else:
+            logger.warning(f"  → LMP: no data for {day}")
 
-            # Save checkpoint after every interval
-            save_checkpoint(iv)
+        save_checkpoint(day)
+        pct = idx / total_days * 100
+        remaining_h = (total_days - idx) * 288 * (delay * 1.1) / 3600
+        logger.info(f"  Progress: {idx}/{total_days} ({pct:.0f}%)  ETA ~{remaining_h:.1f}h")
 
-        done += len(day_intervals_list)
-
-        # Write the day's data to Parquet
-        if day_bc_frames:
-            combined_bc = pd.concat(day_bc_frames, ignore_index=True)
-            store.write_interval(combined_bc)
-            logger.info(f"  → Stored {len(day_bc_frames)} BC intervals "
-                        f"({len(combined_bc):,} rows)")
-
-        if day_lmp_frames:
-            combined_lmp = pd.concat(day_lmp_frames, ignore_index=True)
-            # write_interval expects constraints_df as first arg; pass lmp separately
-            # Use a dummy empty DF for constraints since we already wrote it above
-            empty = pd.DataFrame(columns=["interval", "constraint_name"])
-            store.write_interval(empty, lmp_df=combined_lmp)
-            logger.info(f"  → Stored {len(day_lmp_frames)} LMP intervals "
-                        f"({len(combined_lmp):,} rows)")
-
-        pct = done / len(intervals) * 100
-        remaining = len(intervals) - done
-        est_remaining_h = (remaining * (delay * 1.2 + 2)) / 3600
-        logger.info(
-            f"Progress: {done:,}/{len(intervals):,} ({pct:.1f}%)  "
-            f"BC: {ok_bc} ok / {miss_bc} miss  "
-            f"LMP: {ok_lmp} ok / {miss_lmp} miss  "
-            f"ETA: ~{est_remaining_h:.1f}h remaining"
-        )
-
-    # Final summary
     clear_checkpoint()
     logger.info("=" * 60)
     logger.info("Backfill complete.")
-    logger.info(f"  BC intervals fetched:  {ok_bc:,} / {ok_bc + miss_bc:,}")
-    logger.info(f"  LMP intervals fetched: {ok_lmp:,} / {ok_lmp + miss_lmp:,}")
-    logger.info(f"  Miss rate (BC):  {miss_bc / max(1, ok_bc + miss_bc) * 100:.1f}%")
-    logger.info(f"  Miss rate (LMP): {miss_lmp / max(1, ok_lmp + miss_lmp) * 100:.1f}%")
-    logger.info("")
-    logger.info("Storage stats after backfill:")
     stats = store.storage_stats()
     for name, info in stats.items():
         if isinstance(info, dict):
-            logger.info(f"  {name}: {info['file_count']} files, {info['size_mb']} MB "
-                        f"({info['oldest']} → {info['newest']})")
-    logger.info(f"  Total: {stats['total_size_mb']} MB")
+            logger.info(
+                f"  {name}: {info['file_count']} files, {info['size_mb']} MB "
+                f"({info.get('oldest','?')} → {info.get('newest','?')})"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -379,71 +331,41 @@ async def backfill(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Backfill SPP RTBM history into the DuckDB Parquet store.",
+        description="Backfill SPP RTBM history (daily BC + per-interval LMP).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument(
-        "--days", type=int, default=90,
-        help="Number of days to backfill (default: 90). Ignored if --start/--end given.",
+        "--days", type=int, default=21,
+        help="Number of days to backfill ending yesterday (default: 21).",
     )
-    parser.add_argument(
-        "--start", type=str, default=None,
-        help="Start date (YYYY-MM-DD). Overrides --days.",
-    )
-    parser.add_argument(
-        "--end", type=str, default=None,
-        help="End date (YYYY-MM-DD, inclusive). Defaults to yesterday.",
-    )
-    parser.add_argument(
-        "--concurrency", type=int, default=1,
-        help="Max simultaneous HTTP requests to SPP portal (default: 1). "
-             "DO NOT exceed 2 for SPP's public portal.",
-    )
-    parser.add_argument(
-        "--delay", type=float, default=5.0,
-        help="Base seconds between requests, ±20%% jitter applied (default: 5.0). "
-             "At 5s: 90 days ≈ 36-48 hours. At 2s: ≈ 18-24 hours.",
-    )
-    parser.add_argument(
-        "--no-skip-existing", action="store_true",
-        help="Re-fetch days that already have Parquet files (forces re-download).",
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Show what would be fetched without downloading anything.",
-    )
+    parser.add_argument("--start", type=str, default=None, help="Start date YYYY-MM-DD.")
+    parser.add_argument("--end",   type=str, default=None, help="End date YYYY-MM-DD (inclusive, default: yesterday).")
+    parser.add_argument("--delay", type=float, default=2.0, help="Base seconds between LMP requests (default: 2.0).")
+    parser.add_argument("--no-skip-existing", action="store_true", help="Re-fetch days already in Parquet.")
+    parser.add_argument("--dry-run", action="store_true", help="Show plan without downloading.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    now = datetime.now(UTC).date()
 
-    # Resolve date range
-    now = datetime.now(UTC).replace(tzinfo=None)
-    if args.end:
-        end = datetime.strptime(args.end, "%Y-%m-%d").replace(hour=23, minute=55)
-    else:
-        end = (now - timedelta(days=1)).replace(hour=23, minute=55, second=0, microsecond=0)
-
-    if args.start:
-        start = datetime.strptime(args.start, "%Y-%m-%d").replace(hour=0, minute=0)
-    else:
-        start = (end - timedelta(days=args.days - 1)).replace(hour=0, minute=0)
+    end  = date_type.fromisoformat(args.end)   if args.end   else now - timedelta(days=1)
+    start = date_type.fromisoformat(args.start) if args.start else end - timedelta(days=args.days - 1)
 
     logger.info(f"SPP RTBM Historical Backfill")
-    logger.info(f"Range: {start.date()} → {end.date()} ({(end - start).days + 1} days)")
+    logger.info(f"Range: {start} → {end}  ({(end - start).days + 1} days)")
+    logger.info(f"Strategy: 1 daily BC file/day + 288 LMP interval files/day")
 
     store = DuckDBStore()
-
     asyncio.run(backfill(
         start=start,
         end=end,
         store=store,
-        concurrency=args.concurrency,
         delay=args.delay,
         dry_run=args.dry_run,
-        skip_existing_days=not args.no_skip_existing,
+        skip_existing=not args.no_skip_existing,
     ))
 
 
