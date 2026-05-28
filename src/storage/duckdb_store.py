@@ -43,6 +43,7 @@ Usage
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -57,6 +58,10 @@ _DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "src" / "data" / "time
 
 # Files older than this many days are deleted during the daily pruning pass.
 RETENTION_DAYS = 90
+
+# An LMP day is considered "complete" when this fraction of 288 intervals
+# has been written.  Allows for a few missing 404s at midnight/boundaries.
+LMP_COMPLETE_THRESHOLD = 280
 
 
 class DuckDBStore:
@@ -73,14 +78,19 @@ class DuckDBStore:
         self.data_dir = Path(data_dir)
         self.retention_days = retention_days
         self._constraints_dir = self.data_dir / "constraints"
-        self._lmp_dir = self.data_dir / "lmp"
-        self._sf_dir = self.data_dir / "shift_factors"
+        self._lmp_dir         = self.data_dir / "lmp"
+        self._sf_dir          = self.data_dir / "shift_factors"
+        self._manifest_path   = self.data_dir / "manifest.json"
 
         for d in (self._constraints_dir, self._lmp_dir, self._sf_dir):
             d.mkdir(parents=True, exist_ok=True)
 
         # Track last pruning run — prune at most once per calendar day
         self._last_pruned: Optional[datetime] = None
+
+        # Bootstrap manifest from existing Parquet files if it doesn't exist
+        if not self._manifest_path.exists():
+            self._refresh_manifest_from_files()
 
     # ------------------------------------------------------------------
     # Writes
@@ -98,33 +108,42 @@ class DuckDBStore:
         Also triggers a once-per-day retention pruning pass to delete
         files older than self.retention_days.
         """
-        if constraints_df.empty:
+        # Allow LMP-only writes (empty constraints_df is fine when lmp_df provided)
+        has_constraints = not constraints_df.empty
+        has_lmp = lmp_df is not None and not lmp_df.empty
+
+        if not has_constraints and not has_lmp:
             return
 
-        # Determine partition key from interval timestamp
-        if "interval" in constraints_df.columns:
+        # Determine partition key
+        ts = None
+        if has_constraints and "interval" in constraints_df.columns:
             ts = pd.to_datetime(constraints_df["interval"]).max()
-        else:
+        elif has_lmp and "interval" in lmp_df.columns:
+            ts = pd.to_datetime(lmp_df["interval"]).max()
+        if ts is None or pd.isnull(ts):
             ts = datetime.utcnow()
 
         date_str = ts.strftime("%Y%m%d")
+        date_key = ts.strftime("%Y-%m-%d")
 
-        # Write constraints partition (append to today's file)
-        self._append_parquet(
-            df=constraints_df,
-            directory=self._constraints_dir,
-            filename=f"constraints_{date_str}.parquet",
-        )
+        if has_constraints:
+            self._append_parquet(
+                df=constraints_df,
+                directory=self._constraints_dir,
+                filename=f"constraints_{date_str}.parquet",
+            )
+            self._update_manifest(date_key, "bc", constraints_df)
 
-        # Write LMP partition
-        if lmp_df is not None and not lmp_df.empty:
+        if has_lmp:
             self._append_parquet(
                 df=lmp_df,
                 directory=self._lmp_dir,
                 filename=f"lmp_{date_str}.parquet",
             )
+            self._update_manifest(date_key, "lmp", lmp_df)
 
-        # Once-per-day retention pruning (runs at most once per calendar day)
+        # Once-per-day retention pruning
         self._maybe_prune()
 
     def write_shift_factors(
@@ -312,6 +331,163 @@ class DuckDBStore:
         start = ts - pd.Timedelta(seconds=30)
         end = ts + pd.Timedelta(seconds=30)
         return self.query_constraints(start=start, end=end)
+
+    # ------------------------------------------------------------------
+    # Manifest — tracks per-day download status for the backfill
+    # ------------------------------------------------------------------
+
+    def read_manifest(self) -> dict:
+        """
+        Return the full manifest dict.
+
+        Schema::
+
+            {
+              "2026-05-07": {
+                "bc":  {"status": "complete"|"partial"|"missing",
+                        "intervals": 288, "rows": 14297,
+                        "stored_at": "2026-05-28T14:00:00"},
+                "lmp": {"status": "complete"|"partial"|"missing",
+                        "intervals": 288, "rows": 456032,
+                        "stored_at": "2026-05-28T15:00:00"}
+              },
+              ...
+            }
+        """
+        if self._manifest_path.exists():
+            try:
+                return json.loads(self._manifest_path.read_text())
+            except Exception:
+                pass
+        return {}
+
+    def manifest_status(self, date_key: str, data_type: str) -> str:
+        """
+        Return the status for a specific day/type: 'complete', 'partial', or 'missing'.
+
+        Parameters
+        ----------
+        date_key  : str  e.g. '2026-05-07'
+        data_type : str  'bc' or 'lmp'
+        """
+        manifest = self.read_manifest()
+        entry = manifest.get(date_key, {}).get(data_type, {})
+        return entry.get("status", "missing")
+
+    def missing_days(
+        self,
+        start: str,
+        end: str,
+        data_type: str = "lmp",
+        include_partial: bool = True,
+    ) -> list[str]:
+        """
+        Return a sorted list of date strings that are missing or partial
+        for the given data_type between start and end (inclusive).
+
+        Parameters
+        ----------
+        start, end    : str  e.g. '2026-05-07'
+        data_type     : str  'bc' or 'lmp'
+        include_partial : bool  If True, partial days are returned as missing.
+        """
+        from datetime import date, timedelta
+        manifest = self.read_manifest()
+        start_d = date.fromisoformat(start)
+        end_d   = date.fromisoformat(end)
+        missing = []
+        d = start_d
+        while d <= end_d:
+            key = d.isoformat()
+            status = manifest.get(key, {}).get(data_type, {}).get("status", "missing")
+            if status == "missing" or (include_partial and status == "partial"):
+                missing.append(key)
+            d += timedelta(days=1)
+        return missing
+
+    def _update_manifest(
+        self, date_key: str, data_type: str, df: pd.DataFrame
+    ) -> None:
+        """Update the manifest entry for date_key/data_type after a write."""
+        manifest = self.read_manifest()
+        day_entry = manifest.setdefault(date_key, {})
+
+        intervals = df["interval"].nunique() if "interval" in df.columns else 0
+        rows = len(df)
+
+        threshold = LMP_COMPLETE_THRESHOLD if data_type == "lmp" else 280
+        existing_intervals = day_entry.get(data_type, {}).get("intervals", 0)
+        total_intervals = max(intervals, existing_intervals)
+
+        status = "complete" if total_intervals >= threshold else "partial"
+        day_entry[data_type] = {
+            "status":    status,
+            "intervals": total_intervals,
+            "rows":      day_entry.get(data_type, {}).get("rows", 0) + rows,
+            "stored_at": datetime.utcnow().isoformat(timespec="seconds"),
+        }
+
+        try:
+            self._manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True)
+            )
+        except Exception as e:
+            logger.warning(f"Manifest write failed: {e}")
+
+    def _refresh_manifest_from_files(self) -> None:
+        """
+        Bootstrap the manifest by scanning existing Parquet files.
+        Called once on first instantiation when no manifest.json exists.
+        """
+        manifest: dict = {}
+        now_str = datetime.utcnow().isoformat(timespec="seconds")
+
+        for f in sorted(self._constraints_dir.glob("constraints_*.parquet")):
+            parts = f.stem.rsplit("_", 1)
+            if len(parts) != 2:
+                continue
+            try:
+                d = datetime.strptime(parts[1], "%Y%m%d").date()
+                df = pd.read_parquet(f, columns=["interval"])
+                n = df["interval"].nunique()
+                key = d.isoformat()
+                manifest.setdefault(key, {})["bc"] = {
+                    "status":    "complete" if n >= 280 else "partial",
+                    "intervals": n,
+                    "rows":      len(pd.read_parquet(f)),
+                    "stored_at": now_str,
+                }
+            except Exception:
+                pass
+
+        for f in sorted(self._lmp_dir.glob("lmp_*.parquet")):
+            parts = f.stem.rsplit("_", 1)
+            if len(parts) != 2:
+                continue
+            try:
+                d = datetime.strptime(parts[1], "%Y%m%d").date()
+                df = pd.read_parquet(f, columns=["interval"])
+                n = df["interval"].nunique()
+                key = d.isoformat()
+                manifest.setdefault(key, {})["lmp"] = {
+                    "status":    "complete" if n >= LMP_COMPLETE_THRESHOLD else "partial",
+                    "intervals": n,
+                    "rows":      len(pd.read_parquet(f)),
+                    "stored_at": now_str,
+                }
+            except Exception:
+                pass
+
+        try:
+            self._manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True)
+            )
+            logger.info(
+                f"Manifest bootstrapped from existing Parquet files "
+                f"({len(manifest)} days tracked)."
+            )
+        except Exception as e:
+            logger.warning(f"Manifest bootstrap failed: {e}")
 
     # ------------------------------------------------------------------
     # Internals

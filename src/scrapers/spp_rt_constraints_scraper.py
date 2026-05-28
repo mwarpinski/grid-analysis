@@ -30,16 +30,32 @@ logger = logging.getLogger(__name__)
 # Columns SPP publishes in RTBM binding constraint CSVs.
 # Kept here so we can rename them to consistent snake_case in the output.
 _COLUMN_RENAME = {
-    "Constraint Name":   "constraint_name",
-    "Contingency Name":  "contingency_name",
-    "Shadow Price":      "shadow_price",
-    "Limit":             "limit_mw",
-    "Monitored Value":   "monitored_mw",
-    "Percent":           "pct_of_limit",   # SPP sometimes labels this "Percent"
-    "% of Limit":        "pct_of_limit",   # and sometimes "% of Limit"
-    "State":             "state",
-    "Interval":          "interval",
-    "GMTIntervalEnd":    "gmt_interval_end",
+    # Core fields
+    "Constraint Name":           "constraint_name",
+    "Constraint Type":           "constraint_type",       # FG, M2M, Flowgate, etc.
+    "Contingency Name":          "contingency_name",
+    "Shadow Price":              "shadow_price",
+    "Limit":                     "limit_mw",
+    "Monitored Value":           "monitored_mw",
+    # Physical equipment — key for geo-lookup and map display
+    # e.g. "LN SPLIT_R - SIOUXFL" or "XFMR MIDJ - MIDJ"
+    "Monitored Facility":        "monitored_facility",
+    "Contingent Facility":       "contingent_facility",
+    # Public NERC facility ID — cross-reference with NERC/EIA databases
+    "NERCID":                    "nerc_id",
+    # Loading %
+    "Percent":                   "pct_of_limit",
+    "% of Limit":                "pct_of_limit",
+    # Status / timing
+    "State":                     "state",
+    "TLR Level":                 "tlr_level",
+    "Interconnect":              "interconnect",
+    "Interval":                  "interval",
+    "GMTIntervalEnd":            "gmt_interval_end",
+    # Daily BC aggregate file extras
+    "Source Limit":              "source_limit_mw",
+    "Real Time Effective Limit": "rt_effective_limit_mw",
+    "Initial Effective Limit":   "initial_effective_limit_mw",
 }
 
 # Threshold below which a "near binding" warning is surfaced (%)

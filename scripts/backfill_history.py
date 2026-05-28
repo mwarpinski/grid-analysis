@@ -102,10 +102,42 @@ def generate_lmp_intervals(day: date_type) -> List[datetime]:
     return intervals
 
 
-def already_stored(store: DuckDBStore, day: date_type) -> bool:
-    """True if a daily Parquet file already exists for this date."""
-    parquet_path = store._constraints_dir / f"constraints_{day.strftime('%Y%m%d')}.parquet"
-    return parquet_path.exists()
+def bc_already_stored(store: DuckDBStore, day: date_type) -> bool:
+    """True if the BC Parquet file already exists for this date."""
+    return (store._constraints_dir / f"constraints_{day.strftime('%Y%m%d')}.parquet").exists()
+
+
+def lmp_already_stored(store: DuckDBStore, day: date_type) -> bool:
+    """
+    True if the LMP parquet exists AND has >= 280 of the 288 expected
+    intervals for the day.  A partial file (from a mid-day interruption)
+    returns False so the missing intervals are filled in.
+    """
+    path = store._lmp_dir / f"lmp_{day.strftime('%Y%m%d')}.parquet"
+    if not path.exists():
+        return False
+    try:
+        df = pd.read_parquet(path, columns=["interval"])
+        return df["interval"].nunique() >= 280
+    except Exception:
+        return False
+
+
+def lmp_stored_intervals(store: DuckDBStore, day: date_type) -> set:
+    """
+    Return the set of interval timestamps already written to the LMP parquet
+    for this day, floored to the minute.  Used to skip individual intervals
+    that survived a mid-day interruption so we never re-fetch or duplicate them.
+    Returns an empty set when no file exists yet.
+    """
+    path = store._lmp_dir / f"lmp_{day.strftime('%Y%m%d')}.parquet"
+    if not path.exists():
+        return set()
+    try:
+        df = pd.read_parquet(path, columns=["interval"])
+        return set(pd.to_datetime(df["interval"]).dt.floor("min").unique())
+    except Exception:
+        return set()
 
 
 def load_checkpoint() -> Optional[str]:
@@ -203,47 +235,53 @@ async def backfill(
     store: DuckDBStore,
     delay: float = 2.0,
     dry_run: bool = False,
-    skip_existing: bool = True,
+    force: bool = False,
 ) -> None:
     all_days = generate_days(start, end)
     logger.info(f"Backfill range: {start} → {end}  ({len(all_days)} days)")
 
     if dry_run:
-        logger.info("DRY RUN — no data will be downloaded.")
-        for d in all_days[:5]:
-            logger.info(f"  Would fetch BC(1 req) + LMP(288 req) for {d}")
-        if len(all_days) > 5:
-            logger.info(f"  ... and {len(all_days) - 5} more days")
-        est = len(all_days) * 288 * (delay * 1.1) / 3600
-        logger.info(f"  Estimated time: {est:.1f} hours")
-        return
-
-    # Resume from checkpoint
-    checkpoint = load_checkpoint()
-    if checkpoint:
-        resume_after = date_type.fromisoformat(checkpoint)
-        all_days = [d for d in all_days if d > resume_after]
-        logger.info(f"Resuming: {len(all_days)} days remaining")
-
-    # Skip already-stored days
-    if skip_existing:
-        skipped = []
-        filtered = []
+        manifest = store.read_manifest()
+        logger.info("DRY RUN — manifest status per day:")
         for d in all_days:
-            if already_stored(store, d):
-                skipped.append(d)
-            else:
-                filtered.append(d)
-        if skipped:
-            logger.info(f"Skipping {len(skipped)} day(s) already in Parquet store")
-        all_days = filtered
-
-    if not all_days:
-        logger.info("Nothing to backfill — all days already stored.")
+            key = d.isoformat()
+            bc  = manifest.get(key, {}).get("bc",  {}).get("status", "missing")
+            lmp = manifest.get(key, {}).get("lmp", {}).get("status", "missing")
+            flag = "✓" if bc == "complete" and lmp == "complete" else "✗"
+            logger.info(f"  {flag} {key}  BC={bc:<8} LMP={lmp}")
+        to_fetch = [d for d in all_days
+                    if store.manifest_status(d.isoformat(), "bc")  != "complete"
+                    or store.manifest_status(d.isoformat(), "lmp") != "complete"]
+        est = len(to_fetch) * 288 * (delay * 1.1) / 3600
+        logger.info(f"  {len(to_fetch)} days would be fetched. Estimated time: {est:.1f} hours")
         return
 
-    est = len(all_days) * 288 * (delay * 1.1) / 3600
-    logger.info(f"{len(all_days)} days to fetch. Estimated time: {est:.1f} hours")
+    # Resume from checkpoint (coarse-grained day skip used only when manifest
+    # is absent or force=True prevents manifest use)
+    checkpoint = load_checkpoint()
+    if checkpoint and force:
+        clear_checkpoint()  # force overrides checkpoint too
+
+    # Determine which days still need work using the manifest
+    if force:
+        days_to_process = all_days
+        logger.info("--force: re-fetching all days regardless of manifest")
+    else:
+        days_to_process = [
+            d for d in all_days
+            if store.manifest_status(d.isoformat(), "bc")  != "complete"
+            or store.manifest_status(d.isoformat(), "lmp") != "complete"
+        ]
+        skipped = len(all_days) - len(days_to_process)
+        if skipped:
+            logger.info(f"Manifest: skipping {skipped} day(s) already complete")
+
+    if not days_to_process:
+        logger.info("Nothing to backfill — all days complete per manifest.")
+        return
+
+    est = len(days_to_process) * 288 * (delay * 1.1) / 3600
+    logger.info(f"{len(days_to_process)} days to fetch. Estimated time: {est:.1f} hours")
 
     bc_scraper  = RTConstraintsScraper()
     lmp_scraper = RTBMLMPScraper()
@@ -257,56 +295,79 @@ async def backfill(
         "MCC":                 "mcc",
     }
 
-    total_days = len(all_days)
-    for idx, day in enumerate(all_days, 1):
+    BATCH_SIZE = 12  # Write LMP every 12 intervals (~1 hour) — safe against interruptions
+
+    total_days = len(days_to_process)
+    for idx, day in enumerate(days_to_process, 1):
         logger.info(f"[{idx}/{total_days}] Fetching {day} ...")
 
-        # ── 1. Daily BC aggregate (1 request) ───────────────────────────
-        bc_df = await fetch_daily_bc(bc_scraper, day)
-        if not bc_df.empty:
-            bc_df = bc_df.rename(columns={
-                k: v for k, v in col_rename.items() if k in bc_df.columns
-            })
-            bc_df.columns = [c.lower() for c in bc_df.columns]
-            if "interval" in bc_df.columns:
-                bc_df["interval"] = pd.to_datetime(bc_df["interval"], errors="coerce")
-            store.write_interval(bc_df)
-            logger.info(f"  → BC stored: {len(bc_df)} rows")
+        # ── 1. Daily BC aggregate (1 request) — skip if already stored ──
+        if bc_already_stored(store, day):
+            logger.info(f"  BC {day}: already stored, skipping")
         else:
-            logger.warning(f"  → BC: no data for {day}")
-
-        # ── 2. Per-interval LMP (288 requests) ──────────────────────────
-        intervals = generate_lmp_intervals(day)
-        tasks = [
-            fetch_lmp_interval(lmp_scraper, iv, delay, semaphore)
-            for iv in intervals
-        ]
-        results = await asyncio.gather(*tasks)
-
-        lmp_frames = []
-        ok = miss = 0
-        for iv, df in zip(intervals, results):
-            if df is not None and not df.empty:
-                df = df.rename(columns={
-                    k: v for k, v in col_rename.items() if k in df.columns
+            bc_df = await fetch_daily_bc(bc_scraper, day)
+            if not bc_df.empty:
+                bc_df = bc_df.rename(columns={
+                    k: v for k, v in col_rename.items() if k in bc_df.columns
                 })
-                df.columns = [c.lower() for c in df.columns]
-                if "interval" not in df.columns:
-                    df["interval"] = iv
-                else:
-                    df["interval"] = pd.to_datetime(df["interval"], errors="coerce")
-                lmp_frames.append(df)
-                ok += 1
+                bc_df.columns = [c.lower() for c in bc_df.columns]
+                if "interval" in bc_df.columns:
+                    bc_df["interval"] = pd.to_datetime(bc_df["interval"], errors="coerce")
+                store.write_interval(bc_df)
+                logger.info(f"  → BC stored: {len(bc_df)} rows")
             else:
-                miss += 1
+                logger.warning(f"  → BC: no data for {day}")
 
-        if lmp_frames:
-            combined_lmp = pd.concat(lmp_frames, ignore_index=True)
-            empty_bc = pd.DataFrame(columns=["interval", "constraint_name"])
-            store.write_interval(empty_bc, lmp_df=combined_lmp)
-            logger.info(f"  → LMP stored: {ok} intervals ({len(combined_lmp):,} rows), {miss} missed")
+        # ── 2. Per-interval LMP (288 requests, written in hourly batches) ─
+        if lmp_already_stored(store, day):
+            logger.info(f"  LMP {day}: already stored (280+ intervals), skipping")
         else:
-            logger.warning(f"  → LMP: no data for {day}")
+            intervals = generate_lmp_intervals(day)
+            # Skip intervals already on disk (mid-day restart resilience)
+            already_fetched = lmp_stored_intervals(store, day)
+            if already_fetched:
+                intervals_to_fetch = [iv for iv in intervals if iv not in already_fetched]
+                logger.info(f"  LMP {day}: {len(already_fetched)} intervals on disk, "
+                            f"fetching {len(intervals_to_fetch)} remaining")
+            else:
+                intervals_to_fetch = intervals
+            ok   = len(already_fetched)  # credit already-stored intervals
+            miss = 0
+            empty_bc = pd.DataFrame(columns=["interval", "constraint_name"])
+
+            # Process in batches of BATCH_SIZE — write after each batch
+            for batch_start in range(0, len(intervals_to_fetch), BATCH_SIZE):
+                batch = intervals_to_fetch[batch_start:batch_start + BATCH_SIZE]
+                tasks = [
+                    fetch_lmp_interval(lmp_scraper, iv, delay, semaphore)
+                    for iv in batch
+                ]
+                results = await asyncio.gather(*tasks)
+
+                batch_frames = []
+                for iv, df in zip(batch, results):
+                    if df is not None and not df.empty:
+                        df = df.rename(columns={
+                            k: v for k, v in col_rename.items() if k in df.columns
+                        })
+                        df.columns = [c.lower() for c in df.columns]
+                        if "interval" not in df.columns:
+                            df["interval"] = iv
+                        else:
+                            df["interval"] = pd.to_datetime(df["interval"], errors="coerce")
+                        batch_frames.append(df)
+                        ok += 1
+                    else:
+                        miss += 1
+
+                if batch_frames:
+                    combined = pd.concat(batch_frames, ignore_index=True)
+                    store.write_interval(empty_bc, lmp_df=combined)
+
+            if ok > 0:
+                logger.info(f"  → LMP stored: {ok} intervals, {miss} missed")
+            else:
+                logger.warning(f"  → LMP: no data for {day}")
 
         save_checkpoint(day)
         pct = idx / total_days * 100
@@ -339,10 +400,17 @@ def parse_args() -> argparse.Namespace:
         "--days", type=int, default=21,
         help="Number of days to backfill ending yesterday (default: 21).",
     )
-    parser.add_argument("--start", type=str, default=None, help="Start date YYYY-MM-DD.")
-    parser.add_argument("--end",   type=str, default=None, help="End date YYYY-MM-DD (inclusive, default: yesterday).")
-    parser.add_argument("--delay", type=float, default=2.0, help="Base seconds between LMP requests (default: 2.0).")
-    parser.add_argument("--no-skip-existing", action="store_true", help="Re-fetch days already in Parquet.")
+    parser.add_argument("--start",  type=str,   default=None, help="Start date YYYY-MM-DD.")
+    parser.add_argument("--end",    type=str,   default=None, help="End date YYYY-MM-DD (inclusive, default: yesterday).")
+    parser.add_argument("--delay",  type=float, default=2.0,  help="Base seconds between LMP requests (default: 2.0).")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Re-fetch all days regardless of manifest (use for revisions/corrections).",
+    )
+    parser.add_argument(
+        "--status", action="store_true",
+        help="Print manifest status for the date range and exit (no downloads).",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Show plan without downloading.")
     return parser.parse_args()
 
@@ -355,17 +423,34 @@ def main() -> None:
     start = date_type.fromisoformat(args.start) if args.start else end - timedelta(days=args.days - 1)
 
     logger.info(f"SPP RTBM Historical Backfill")
-    logger.info(f"Range: {start} → {end}  ({(end - start).days + 1} days)")
+    logger.info(f"Range: {start} \u2192 {end}  ({(end - start).days + 1} days)")
     logger.info(f"Strategy: 1 daily BC file/day + 288 LMP interval files/day")
 
     store = DuckDBStore()
+
+    if args.status:
+        # Print manifest and exit — no downloads
+        manifest = store.read_manifest()
+        logger.info("Manifest status:")
+        d = start
+        while d <= end:
+            key = d.isoformat()
+            bc  = manifest.get(key, {}).get("bc",  {}).get("status", "missing")
+            lmp = manifest.get(key, {}).get("lmp", {}).get("status", "missing")
+            bc_iv  = manifest.get(key, {}).get("bc",  {}).get("intervals", 0)
+            lmp_iv = manifest.get(key, {}).get("lmp", {}).get("intervals", 0)
+            flag = "✓" if bc == "complete" and lmp == "complete" else "✗"
+            logger.info(f"  {flag} {key}  BC={bc:<8} ({bc_iv:>3} iv)  LMP={lmp:<8} ({lmp_iv:>3} iv)")
+            d += timedelta(days=1)
+        return
+
     asyncio.run(backfill(
         start=start,
         end=end,
         store=store,
         delay=args.delay,
         dry_run=args.dry_run,
-        skip_existing=not args.no_skip_existing,
+        force=args.force,
     ))
 
 
