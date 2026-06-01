@@ -15,9 +15,26 @@ async function loadSFPanel(constraintName) {
   label.textContent = truncate(constraintName, 28);
 
   try {
-    const data = await api.get(
-      `/api/v1/shift-factors/table?constraint=${encodeURIComponent(constraintName)}&limit=20`
-    );
+    let data;
+    try {
+      data = await api.get(
+        `/api/v1/shift-factors/table?constraint=${encodeURIComponent(constraintName)}&limit=20`
+      );
+    } catch (e) {
+      // 404 = constraint hasn't bound in the solve window yet — normal, not an error
+      const is404 = e.message?.includes('404') || e.status === 404;
+      if (is404) {
+        content.innerHTML = `
+          <div class="sf-placeholder">
+            <p style="color:#94a3b8">⏳ No shift factors solved yet for</p>
+            <p style="color:#cbd5e1;font-size:11px;word-break:break-all;margin-top:4px">${constraintName}</p>
+            <p style="color:#64748b;font-size:11px;margin-top:6px">This constraint hasn't appeared as binding<br>in the current solve window.</p>
+          </div>`;
+        chartWrap.classList.add('hidden');
+        return;
+      }
+      throw e;  // re-throw real errors
+    }
 
     if (!data.records || data.records.length === 0) {
       content.innerHTML = '<div class="sf-placeholder"><p>No shift factors solved for this constraint yet.</p></div>';
