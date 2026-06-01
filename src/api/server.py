@@ -49,8 +49,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Load .env before any imports that need env vars (e.g. ANTHROPIC_API_KEY)
+# ---------------------------------------------------------------------------
+
+def _load_dotenv():
+    env_path = Path(__file__).parent.parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+_load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,6 +77,8 @@ from fastapi.staticfiles import StaticFiles
 from src.api.forecast_cache import forecast_cache
 from src.api.ingest_worker import ingest_loop, ingest_once
 from src.api.routers import constraints, flow_impact, forecast, mcc, shift_factors, validation, websocket
+from src.api.routers import constraint_resolver as resolver_router
+from src.analysis.llm_constraint_resolver import resolver as llm_resolver
 from src.api.sf_cache import cache
 
 logger = logging.getLogger(__name__)
@@ -100,6 +119,22 @@ async def lifespan(app: FastAPI):
     # Phase 13 — start forecast model training and background retrain loop
     logger.info("Starting forecast cache (Phase 13)...")
     await forecast_cache.startup()
+
+    # Phase 14 — start LLM constraint resolver (delayed, non-blocking)
+    async def _delayed_resolver():
+        await asyncio.sleep(60)  # give ingest worker time to settle first
+        logger.info("Phase 14: Starting LLM constraint resolver background pass...")
+        result = await llm_resolver.resolve_all_pending()
+        logger.info(f"Phase 14: LLM resolver complete — {result}")
+
+    if llm_resolver.has_api_key:
+        asyncio.create_task(_delayed_resolver(), name="llm_constraint_resolver")
+        logger.info("Phase 14: LLM constraint resolver scheduled (starts in 60s).")
+    else:
+        logger.info(
+            "Phase 14: ANTHROPIC_API_KEY not set — constraint resolver inactive. "
+            "Add to .env to enable."
+        )
 
     yield  # Server is running
 
@@ -150,6 +185,7 @@ app.include_router(mcc.router)
 app.include_router(websocket.router)
 app.include_router(validation.router)
 app.include_router(forecast.router)
+app.include_router(resolver_router.router)
 
 # Phase 11 — added when portfolio router is built
 try:
