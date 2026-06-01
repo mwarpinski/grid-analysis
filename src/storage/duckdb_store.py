@@ -434,6 +434,36 @@ class DuckDBStore:
         except Exception as e:
             logger.warning(f"Manifest write failed: {e}")
 
+    def mark_day_exhausted(
+        self, date_key: str, data_type: str, fetched: int, attempted: int
+    ) -> None:
+        """
+        Mark a day/data_type as fully attempted, even if below the normal
+        interval threshold.  Called after all intervals have been tried —
+        if SPP returned 404s for the missing slots those are genuine data
+        gaps and retrying will never help.
+
+        Sets status to 'complete' regardless of interval count and records
+        fetched/attempted/spp_gaps for auditability.
+        """
+        manifest = self.read_manifest()
+        day_entry = manifest.setdefault(date_key, {})
+        existing = day_entry.get(data_type, {})
+        day_entry[data_type] = {
+            "status":    "complete",
+            "intervals": fetched,
+            "attempted": attempted,
+            "rows":      existing.get("rows", 0),
+            "spp_gaps":  attempted - fetched,
+            "stored_at": datetime.utcnow().isoformat(timespec="seconds"),
+        }
+        try:
+            self._manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True)
+            )
+        except Exception as e:
+            logger.warning(f"Manifest mark_day_exhausted failed: {e}")
+
     def _refresh_manifest_from_files(self) -> None:
         """
         Bootstrap the manifest by scanning existing Parquet files.

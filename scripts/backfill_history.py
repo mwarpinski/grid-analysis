@@ -364,10 +364,19 @@ async def backfill(
                     combined = pd.concat(batch_frames, ignore_index=True)
                     store.write_interval(empty_bc, lmp_df=combined)
 
+            # All intervals attempted — mark day exhausted so we never
+            # retry SPP data gaps (404s are genuine missing data, not errors)
+            fetched   = ok
+            attempted = ok + miss
+            store.mark_day_exhausted(day.isoformat(), "lmp", fetched, attempted)
             if ok > 0:
-                logger.info(f"  → LMP stored: {ok} intervals, {miss} missed")
+                gaps = miss - len(already_fetched) if already_fetched else miss
+                msg  = f"  → LMP stored: {ok} intervals"
+                if gaps > 0:
+                    msg += f"  ({gaps} genuine SPP gaps — marked complete)"
+                logger.info(msg)
             else:
-                logger.warning(f"  → LMP: no data for {day}")
+                logger.warning(f"  → LMP: no data for {day} — all 404s, marked complete")
 
         save_checkpoint(day)
         pct = idx / total_days * 100
