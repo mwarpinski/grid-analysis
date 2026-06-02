@@ -97,7 +97,7 @@ class ResolvedConstraint:
     confidence:     str = "UNKNOWN"         # HIGH / MEDIUM / LOW / UNKNOWN
     reasoning:      Optional[str] = None
     resolved_at:    str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    model_used:     str = "claude-3-haiku-20240307"
+    model_used:     str = "claude-haiku-4-5-20251001"
     error:          Optional[str] = None
 
     def to_dict(self) -> dict:
@@ -384,10 +384,10 @@ class LLMConstraintResolver:
         self,
         store: Optional[ResolverStore] = None,
         api_key: Optional[str] = None,
-        model: str = "claude-3-haiku-20240307",
+        model: Optional[str] = None,
     ):
         self.store = store or ResolverStore()
-        self.model = model
+        self.model = model or os.environ.get("RESOLVER_MODEL") or "claude-haiku-4-5-20251001"
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self._running = False
         self._last_run: Optional[datetime] = None

@@ -90,9 +90,14 @@
 
     el.innerHTML = sorted.map(m => {
       const active = m.constraint === _activeConstraint ? 'active' : '';
-      const badge = m.fallback
-        ? '<span class="badge-pill badge-gray">persistence</span>'
-        : '<span class="badge-pill badge-teal">ML</span>';
+      let badge = '';
+      if (m.fallback) {
+        badge = '<span class="badge-pill badge-gray">persistence</span>';
+      } else if (m.r2_cv < 0.0) {
+        badge = '<span class="badge-pill badge-warning">⚠ Low R²</span>';
+      } else {
+        badge = '<span class="badge-pill badge-teal">ML</span>';
+      }
       const mae = m.mae_cv != null ? `MAE ${m.mae_cv.toFixed(1)}` : '';
       return `
         <div class="forecast-item ${active}" data-constraint="${m.constraint}" id="fc-item-${m.constraint.replace(/[^a-z0-9]/gi,'_')}">
@@ -298,10 +303,16 @@
                       : dir.startsWith('↓') ? '#22c55e'
                       : '#94a3b8';
 
-    document.getElementById('fc-model-type').textContent = meta.fallback
-      ? '⚠ Persistence (insufficient data)'
-      : '✓ HistGradientBoosting';
-    document.getElementById('fc-model-type').style.color = meta.fallback ? '#f59e0b' : '#22c55e';
+    if (meta.fallback) {
+      document.getElementById('fc-model-type').textContent = '⚠ Persistence (insufficient data)';
+      document.getElementById('fc-model-type').style.color = '#f59e0b';
+    } else if (meta.r2_cv < 0.0) {
+      document.getElementById('fc-model-type').textContent = '⚠ HistGradientBoosting (Low Confidence - Negative R²)';
+      document.getElementById('fc-model-type').style.color = '#f97316';
+    } else {
+      document.getElementById('fc-model-type').textContent = '✓ HistGradientBoosting';
+      document.getElementById('fc-model-type').style.color = '#22c55e';
+    }
 
     document.getElementById('fc-mae').textContent  = meta.mae_cv != null ? `$${meta.mae_cv.toFixed(2)}/MWh` : '—';
     document.getElementById('fc-r2').textContent   = meta.r2_cv  != null ? meta.r2_cv.toFixed(3)            : '—';

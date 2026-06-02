@@ -178,6 +178,8 @@ def _save_model(fc: ShadowPriceForecaster) -> None:
         "mae_cv":          round(fr.mae_cv, 4) if fr and not fr.fallback else None,
         "r2_cv":           round(fr.r2_cv, 4) if fr and not fr.fallback else None,
         "fallback":        fr.fallback if fr else True,
+        "loss_type":       getattr(fr, "loss_type", "squared_error") if fr else "squared_error",
+        "use_symlog":      getattr(fr, "use_symlog", False) if fr else False,
         "saved_at":        datetime.now().isoformat(),
     }
     _write_registry(registry)
@@ -289,6 +291,18 @@ class ForecastCache:
             None, self._load_persisted_models
         )
         logger.info(f"  Loaded {n_loaded} models from disk.")
+
+        # Initialize last_retrained from disk manifest
+        try:
+            registry = _read_registry()
+            times = []
+            for entry in registry.values():
+                if entry.get("trained_at"):
+                    times.append(datetime.fromisoformat(entry["trained_at"]))
+            if times:
+                self.last_retrained = max(times)
+        except Exception as e:
+            logger.debug(f"Could not initialize last_retrained from manifest: {e}")
 
         # Retrain only stale/missing models
         await self.retrain_all(skip_fresh=True)

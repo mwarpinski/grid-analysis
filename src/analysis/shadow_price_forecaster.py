@@ -128,6 +128,7 @@ def build_features(
         feat[f"sp_roll_mean_{w}"] = sp.shift(1).rolling(w, min_periods=1).mean()
         feat[f"sp_roll_std_{w}"] = sp.shift(1).rolling(w, min_periods=2).std().fillna(0)
         feat[f"sp_roll_max_{w}"] = sp.shift(1).rolling(w, min_periods=1).max()
+        feat[f"sp_roll_bind_freq_{w}"] = (sp.abs() > 0.01).shift(1).rolling(w, min_periods=1).mean()
 
     # Binding streak (consecutive intervals with |SP| > threshold)
     binding = (sp.abs() > 0.01).astype(int)
@@ -157,6 +158,8 @@ class FitResult:
     mae_cv: float          # Out-of-fold MAE from last 20% holdout
     r2_cv: float           # Out-of-fold R²
     fallback: bool         # True if using persistence model
+    loss_type: str = "squared_error"
+    use_symlog: bool = False
     feature_importances: dict = field(default_factory=dict)
 
 
@@ -266,30 +269,85 @@ class ShadowPriceForecaster:
         X_train, X_test = X[:-n_test], X[-n_test:]
         y_train, y_test = y[:-n_test], y[-n_test:]
 
-        model = HistGradientBoostingRegressor(**self._model_params)
-        model.fit(X_train, y_train)
+        # AutoML selection: find configuration with lowest holdout MAE
+        candidates = [
+            ("squared_error", False),
+            ("absolute_error", False),
+            ("squared_error", True),
+            ("absolute_error", True),
+        ]
 
-        # Evaluate on holdout
-        y_pred = model.predict(X_test)
-        mae = float(mean_absolute_error(y_test, y_pred))
-        ss_res = np.sum((y_test - y_pred) ** 2)
-        ss_tot = np.sum((y_test - np.mean(y_test)) ** 2)
-        r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-10 else 1.0
+        best_mae = float("inf")
+        best_r2 = float("-inf")
+        best_config = ("absolute_error", True)  # default robust config
+
+        for loss, use_symlog in candidates:
+            if use_symlog:
+                y_train_fit = np.sign(y_train) * np.log1p(np.abs(y_train))
+            else:
+                y_train_fit = y_train
+
+            params = self._model_params.copy()
+            params["loss"] = loss
+
+            try:
+                candidate_model = HistGradientBoostingRegressor(**params)
+                candidate_model.fit(X_train, y_train_fit)
+
+                y_pred_fit = candidate_model.predict(X_test)
+
+                if use_symlog:
+                    y_pred = np.sign(y_pred_fit) * (np.expm1(np.abs(y_pred_fit)))
+                else:
+                    y_pred = y_pred_fit
+
+                mae = float(mean_absolute_error(y_test, y_pred))
+
+                # R2 calculation
+                ss_res = np.sum((y_test - y_pred) ** 2)
+                ss_tot = np.sum((y_test - np.mean(y_test)) ** 2)
+                r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-10 else 1.0
+
+                # Prioritize lowest MAE, use R2 as tie-breaker
+                if mae < best_mae:
+                    best_mae = mae
+                    best_r2 = r2
+                    best_config = (loss, use_symlog)
+            except Exception as e:
+                logger.warning(
+                    f"[{self.constraint_name}] Failed candidate loss={loss}, symlog={use_symlog}: {e}"
+                )
+
+        # Retrain best configuration on all data (train + holdout)
+        best_loss, best_symlog = best_config
+
+        if best_symlog:
+            y_fit = np.sign(y) * np.log1p(np.abs(y))
+        else:
+            y_fit = y
+
+        final_params = self._model_params.copy()
+        final_params["loss"] = best_loss
+
+        final_model = HistGradientBoostingRegressor(**final_params)
+        final_model.fit(X, y_fit)
 
         logger.info(
-            f"[{self.constraint_name}] Trained on {len(X_train)} rows. "
-            f"Holdout MAE={mae:.2f} $/MWh, R²={r2:.3f}"
+            f"[{self.constraint_name}] Selected best config: loss={best_loss}, use_symlog={best_symlog}. "
+            f"Holdout MAE={best_mae:.4f} $/MWh, R²={best_r2:.4f}"
         )
 
-        self._model = model
+        self._model = final_model
         self._feature_cols = feature_cols
         self._fit_result = FitResult(
             constraint=self.constraint_name,
             trained_at=datetime.now(),
             n_training_rows=len(df),
-            mae_cv=mae,
-            r2_cv=r2,
+            mae_cv=best_mae,
+            r2_cv=best_r2,
             fallback=False,
+            loss_type=best_loss,
+            use_symlog=best_symlog,
         )
         return self._fit_result
 
@@ -319,7 +377,11 @@ class ShadowPriceForecaster:
         try:
             next_row = self._build_next_row(current_snapshot)
             X = np.array([[next_row.get(c, np.nan) for c in self._feature_cols]])
-            prediction = float(self._model.predict(X)[0])
+            prediction_fit = float(self._model.predict(X)[0])
+            if self._fit_result and getattr(self._fit_result, "use_symlog", False):
+                prediction = float(np.sign(prediction_fit) * (np.expm1(np.abs(prediction_fit))))
+            else:
+                prediction = prediction_fit
             return prediction
         except Exception as e:
             logger.warning(f"[{self.constraint_name}] predict() failed: {e}. Using persistence.")
@@ -381,7 +443,11 @@ class ShadowPriceForecaster:
                     feat_df = build_features(temp_history)
                     last_row = feat_df.iloc[-1]
                     X = np.array([[last_row.get(c, np.nan) for c in self._feature_cols]])
-                    predicted = float(self._model.predict(X)[0])
+                    predicted_fit = float(self._model.predict(X)[0])
+                    if self._fit_result and getattr(self._fit_result, "use_symlog", False):
+                        predicted = float(np.sign(predicted_fit) * (np.expm1(np.abs(predicted_fit))))
+                    else:
+                        predicted = predicted_fit
                 except Exception as e:
                     logger.debug(f"horizon step {step}: {e}")
                     predicted = running_sp

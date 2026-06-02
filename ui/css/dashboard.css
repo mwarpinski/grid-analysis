@@ -404,6 +404,7 @@ html, body {
 }
 .badge-teal   { background: rgba(20,184,166,0.2);  color: #2dd4bf; }
 .badge-gray   { background: rgba(100,116,139,0.2); color: #94a3b8; }
+.badge-warning { background: rgba(245,158,11,0.2); color: #fbbf24; }
 .badge-blue   { background: rgba(56,189,248,0.15); color: #38bdf8; font-size: 0.72rem; padding: 0.15rem 0.6rem; border-radius: 4px; }
 
 /* Chart area */
@@ -483,4 +484,9 @@ html, body {
   color: #ef4444;
   font-size: 0.78rem;
   font-family: 'JetBrains Mono', monospace;
+}
+
+/* General Utilities */
+.hidden {
+  display: none !important;
 }
