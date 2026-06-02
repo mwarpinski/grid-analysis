@@ -1,46 +1,19 @@
 """
 backfill_history.py
 ====================
-Backfills the last N days of SPP RTBM binding constraint and LMP data
+Backfills the last N days of SPP RTBM or MISO RT market binding constraint and LMP data
 into the Parquet store.
-
-Data availability on SPP portal
----------------------------------
-- **BC (binding constraints)**: SPP only publishes live per-interval BC files
-  for the *current day*. For historical dates, use the daily aggregate file:
-    RTBM-DAILY-BC-YYYYMMDD.csv  →  1 file per day, all 288 intervals combined
-  These are available under By_Day/ and are retained for ~90 days.
-
-- **LMP**: SPP publishes per-interval LMP files for historical dates:
-    RTBM-LMP-SL-YYYYMMDDhhmm.csv  →  288 files per day
-  Note: intervals start at 00:05, not 00:00 (SPP convention).
-
-Strategy
---------
-  1. Fetch 1 daily BC file per day  (fast — ~1 request/day)
-  2. Fetch per-interval LMP files   (288 requests/day — rate limited)
-
-Design principles
------------------
-- ONE request at a time with a 2-second base delay + ±20% random jitter.
-- Exponential backoff on HTTP errors.
-- Checkpoint file tracks the last completed day so the job resumes after restart.
-- Skips days that already have Parquet files.
 
 Usage
 -----
-    # Backfill last 21 days (3 full weeks — good day-of-week seasonality)
-    python scripts/backfill_history.py --days 21
+    # Backfill SPP last 21 days
+    python scripts/backfill_history.py --iso spp --days 21
 
-    # Backfill a specific range
-    python scripts/backfill_history.py --start 2026-05-01 --end 2026-05-25
+    # Backfill MISO last 45 days
+    python scripts/backfill_history.py --iso miso --days 45
 
     # Dry run
-    python scripts/backfill_history.py --dry-run
-
-Rate estimates (LMP-dominated)
----------------------------------
-  21 days × 288 intervals × ~2.5s/request ≈ ~4.2 hours
+    python scripts/backfill_history.py --iso miso --days 45 --dry-run
 """
 
 from __future__ import annotations
@@ -52,17 +25,19 @@ import logging
 import random
 import sys
 from datetime import datetime, timedelta, timezone, date as date_type
+from io import StringIO
 from pathlib import Path
 from typing import List, Optional
 
 import pandas as pd
+import requests
 
 # Ensure the project root is on the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.scrapers.spp_rt_constraints_scraper import RTConstraintsScraper
 from src.scrapers.spp_rtlmp_scraper import RTBMLMPScraper
-from src.storage.duckdb_store import DuckDBStore
+from src.storage.duckdb_store import store as default_store, DuckDBStore
 
 UTC = timezone.utc
 
@@ -77,7 +52,8 @@ logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
-CHECKPOINT_FILE = Path("src/data/.backfill_checkpoint")
+def get_checkpoint_file(iso: str) -> Path:
+    return Path(f"src/data/.backfill_checkpoint_{iso.lower()}")
 
 
 def generate_days(start: date_type, end: date_type) -> List[date_type]:
@@ -102,35 +78,33 @@ def generate_lmp_intervals(day: date_type) -> List[datetime]:
     return intervals
 
 
-def bc_already_stored(store: DuckDBStore, day: date_type) -> bool:
+def bc_already_stored(store: DuckDBStore, day: date_type, iso: str = "spp") -> bool:
     """True if the BC Parquet file already exists for this date."""
-    return (store._constraints_dir / f"constraints_{day.strftime('%Y%m%d')}.parquet").exists()
+    return (store._constraints_dir_for_iso(iso) / f"constraints_{day.strftime('%Y%m%d')}.parquet").exists()
 
 
-def lmp_already_stored(store: DuckDBStore, day: date_type) -> bool:
+def lmp_already_stored(store: DuckDBStore, day: date_type, iso: str = "spp") -> bool:
     """
-    True if the LMP parquet exists AND has >= 280 of the 288 expected
-    intervals for the day.  A partial file (from a mid-day interruption)
-    returns False so the missing intervals are filled in.
+    True if the LMP parquet exists AND has enough expected
+    intervals for the day.
     """
-    path = store._lmp_dir / f"lmp_{day.strftime('%Y%m%d')}.parquet"
+    path = store._lmp_dir_for_iso(iso) / f"lmp_{day.strftime('%Y%m%d')}.parquet"
     if not path.exists():
         return False
     try:
         df = pd.read_parquet(path, columns=["interval"])
-        return df["interval"].nunique() >= 280
+        thresh = 24 if iso.lower() == "miso" else 280
+        return df["interval"].nunique() >= thresh
     except Exception:
         return False
 
 
-def lmp_stored_intervals(store: DuckDBStore, day: date_type) -> set:
+def lmp_stored_intervals(store: DuckDBStore, day: date_type, iso: str = "spp") -> set:
     """
     Return the set of interval timestamps already written to the LMP parquet
-    for this day, floored to the minute.  Used to skip individual intervals
-    that survived a mid-day interruption so we never re-fetch or duplicate them.
-    Returns an empty set when no file exists yet.
+    for this day, floored to the minute.
     """
-    path = store._lmp_dir / f"lmp_{day.strftime('%Y%m%d')}.parquet"
+    path = store._lmp_dir_for_iso(iso) / f"lmp_{day.strftime('%Y%m%d')}.parquet"
     if not path.exists():
         return set()
     try:
@@ -140,30 +114,111 @@ def lmp_stored_intervals(store: DuckDBStore, day: date_type) -> set:
         return set()
 
 
-def load_checkpoint() -> Optional[str]:
-    if CHECKPOINT_FILE.exists():
+def load_checkpoint(iso: str) -> Optional[str]:
+    checkpoint_file = get_checkpoint_file(iso)
+    if checkpoint_file.exists():
         try:
-            data = json.loads(CHECKPOINT_FILE.read_text())
+            data = json.loads(checkpoint_file.read_text())
             ts = data.get("last_completed_day")
             if ts:
-                logger.info(f"Checkpoint found — resuming after {ts}")
+                logger.info(f"Checkpoint found for {iso.upper()} — resuming after {ts}")
             return ts
         except Exception:
             pass
     return None
 
 
-def save_checkpoint(day: date_type) -> None:
-    CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CHECKPOINT_FILE.write_text(json.dumps({
+def save_checkpoint(day: date_type, iso: str) -> None:
+    checkpoint_file = get_checkpoint_file(iso)
+    checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_file.write_text(json.dumps({
         "last_completed_day": day.isoformat(),
         "saved_at": datetime.now(UTC).isoformat(),
     }))
 
 
-def clear_checkpoint() -> None:
-    if CHECKPOINT_FILE.exists():
-        CHECKPOINT_FILE.unlink()
+def clear_checkpoint(iso: str) -> None:
+    checkpoint_file = get_checkpoint_file(iso)
+    if checkpoint_file.exists():
+        checkpoint_file.unlink()
+
+
+# ---------------------------------------------------------------------------
+# MISO-Specific Parsing Helpers
+# ---------------------------------------------------------------------------
+
+def parse_miso_constraints(df: pd.DataFrame) -> pd.DataFrame:
+    """Parse raw MISO yearly binding constraints CSV."""
+    df = df[df['Market Date'].astype(str).str.contains('/', na=False)].copy()
+    
+    # Parse shadow price (MISO puts negative sign or parentheses, we want absolute)
+    prices = df['Preliminary Shadow Price'].astype(str).str.replace('(', '', regex=False)
+    prices = prices.str.replace(')', '', regex=False).str.replace('$', '', regex=False).str.replace(',', '', regex=False)
+    df['shadow_price'] = pd.to_numeric(prices, errors='coerce').abs()
+    
+    # Parse interval (localized to America/New_York and converted to UTC timezone-naive)
+    df['interval'] = pd.to_datetime(df['Market Date'] + ' ' + df['Hour of Occurrence'])
+    try:
+        df['interval'] = df['interval'].dt.tz_localize("America/New_York", ambiguous='NaT', nonexistent='NaT').dt.tz_convert("UTC").dt.tz_localize(None)
+    except Exception:
+        pass
+        
+    df = df.rename(columns={
+        'Constraint Name': 'constraint_name',
+        'Contingency Description': 'contingency_name'
+    })
+    
+    df['state'] = 'BINDING'
+    df['limit_mw'] = None
+    df['monitored_mw'] = None
+    df['pct_of_limit'] = 100.0
+    
+    cols = ['constraint_name', 'interval', 'shadow_price', 'state', 'limit_mw', 'monitored_mw', 'pct_of_limit', 'contingency_name']
+    return df[[c for c in cols if c in df.columns]]
+
+
+def parse_miso_lmp(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
+    """Parse raw MISO daily LMP CSV with HE format."""
+    df = df.rename(columns={'Node': 'settlement_location', 'Value': 'value'})
+    df = df[df['value'].isin(['LMP', 'MCC', 'MLC'])]
+    
+    he_cols = [f'HE {i}' for i in range(1, 25)]
+    melted = df.melt(
+        id_vars=['settlement_location', 'value'],
+        value_vars=[c for c in he_cols if c in df.columns],
+        var_name='he',
+        value_name='price'
+    )
+    
+    melted['hour'] = melted['he'].str.replace('HE ', '', regex=False).astype(int)
+    melted['price'] = pd.to_numeric(melted['price'], errors='coerce')
+    
+    pivoted = melted.pivot(
+        index=['settlement_location', 'hour'],
+        columns='value',
+        values='price'
+    ).reset_index()
+    
+    for col in ['LMP', 'MCC', 'MLC']:
+        if col not in pivoted.columns:
+            pivoted[col] = None
+            
+    pivoted = pivoted.rename(columns={
+        'LMP': 'lmp',
+        'MCC': 'mcc',
+        'MLC': 'mlc'
+    })
+    
+    base_date = pd.to_datetime(date_str)
+    pivoted['interval'] = base_date + pd.to_timedelta(pivoted['hour'] - 1, unit='h')
+    
+    try:
+        pivoted['interval'] = pivoted['interval'].dt.tz_localize("America/New_York", ambiguous='NaT', nonexistent='NaT').dt.tz_convert("UTC").dt.tz_localize(None)
+    except Exception:
+        pass
+        
+    pivoted = pivoted.dropna(subset=['interval'])
+    return pivoted[['interval', 'settlement_location', 'lmp', 'mcc', 'mlc']]
 
 
 # ---------------------------------------------------------------------------
@@ -175,10 +230,6 @@ async def fetch_daily_bc(
     day: date_type,
     max_retries: int = 3,
 ) -> pd.DataFrame:
-    """
-    Fetch the daily aggregate BC file for one calendar day.
-    Returns empty DataFrame on failure (404 or repeated errors).
-    """
     day_dt = datetime(day.year, day.month, day.day)
     backoff = 5.0
     for attempt in range(max_retries + 1):
@@ -207,7 +258,6 @@ async def fetch_lmp_interval(
     semaphore: asyncio.Semaphore,
     max_retries: int = 2,
 ) -> pd.DataFrame:
-    """Fetch one 5-minute LMP interval file with rate limiting."""
     async with semaphore:
         await asyncio.sleep(delay * random.uniform(0.8, 1.2))
         backoff = 5.0
@@ -217,7 +267,7 @@ async def fetch_lmp_interval(
                 return df
             except Exception as e:
                 if "404" in str(e):
-                    return pd.DataFrame()   # interval simply doesn't exist
+                    return pd.DataFrame()
                 if attempt == max_retries:
                     logger.debug(f"  LMP {interval}: gave up — {e}")
                     return pd.DataFrame()
@@ -226,10 +276,156 @@ async def fetch_lmp_interval(
 
 
 # ---------------------------------------------------------------------------
+# MISO Year Constraints Loader
+# ---------------------------------------------------------------------------
+
+async def fetch_miso_year_constraints(year: int) -> pd.DataFrame:
+    url = f"https://docs.misoenergy.org/marketreports/{year}_rt_bc_HIST.csv"
+    logger.info(f"Downloading MISO yearly constraints for {year} from {url} ...")
+    try:
+        def _get():
+            res = requests.get(url, timeout=45)
+            res.raise_for_status()
+            return res.text
+        text = await asyncio.to_thread(_get)
+        df = pd.read_csv(StringIO(text), skiprows=2)
+        parsed = parse_miso_constraints(df)
+        logger.info(f"Successfully loaded and parsed {len(parsed)} MISO constraint records for {year}")
+        return parsed
+    except Exception as e:
+        logger.error(f"Failed to fetch MISO constraints for {year}: {e}")
+        return pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
 # Main backfill loop
 # ---------------------------------------------------------------------------
 
-async def backfill(
+async def backfill_miso(
+    start: date_type,
+    end: date_type,
+    store: DuckDBStore,
+    delay: float = 1.0,
+    dry_run: bool = False,
+    force: bool = False,
+) -> None:
+    all_days = generate_days(start, end)
+    logger.info(f"MISO Backfill range: {start} → {end}  ({len(all_days)} days)")
+
+    if dry_run:
+        manifest = store.read_manifest(iso="miso")
+        logger.info("DRY RUN — manifest status per day:")
+        for d in all_days:
+            key = d.isoformat()
+            bc  = manifest.get(key, {}).get("bc",  {}).get("status", "missing")
+            lmp = manifest.get(key, {}).get("lmp", {}).get("status", "missing")
+            flag = "✓" if bc == "complete" and lmp == "complete" else "✗"
+            logger.info(f"  {flag} {key}  BC={bc:<8} LMP={lmp}")
+        return
+
+    # Filter days to process using the manifest
+    if force:
+        days_to_process = all_days
+        logger.info("--force: re-fetching all days regardless of manifest")
+    else:
+        days_to_process = [
+            d for d in all_days
+            if store.manifest_status(d.isoformat(), "bc", iso="miso")  != "complete"
+            or store.manifest_status(d.isoformat(), "lmp", iso="miso") != "complete"
+        ]
+        skipped = len(all_days) - len(days_to_process)
+        if skipped:
+            logger.info(f"Manifest: skipping {skipped} day(s) already complete")
+
+    if not days_to_process:
+        logger.info("Nothing to backfill — all days complete per manifest.")
+        return
+
+    # Load constraints by year
+    years_needed = sorted(list(set(d.year for d in days_to_process)))
+    miso_year_constraints = {}
+    for yr in years_needed:
+        miso_year_constraints[yr] = await fetch_miso_year_constraints(yr)
+
+    total_days = len(days_to_process)
+    checkpoint = load_checkpoint("miso")
+    if checkpoint and force:
+        clear_checkpoint("miso")
+
+    for idx, day in enumerate(days_to_process, 1):
+        day_str = day.isoformat()
+        logger.info(f"[{idx}/{total_days}] Fetching MISO data for {day} ...")
+
+        # ── 1. Constraints ──
+        if store.manifest_status(day_str, "bc", iso="miso") == "complete" and not force:
+            logger.info(f"  BC {day}: already complete, skipping")
+        else:
+            yr_df = miso_year_constraints.get(day.year)
+            if yr_df is not None and not yr_df.empty:
+                try:
+                    est_dates = pd.to_datetime(yr_df['interval']).dt.tz_localize('UTC').dt.tz_convert('America/New_York').dt.date
+                    day_bc_df = yr_df[est_dates == day].copy()
+                except Exception:
+                    day_bc_df = yr_df[pd.to_datetime(yr_df['interval']).dt.date == day].copy()
+                
+                if not day_bc_df.empty:
+                    # Group by UTC date and write each group separately
+                    groups = day_bc_df.groupby(pd.to_datetime(day_bc_df["interval"]).dt.date)
+                    for utc_date, group_df in groups:
+                        store.write_interval(group_df, iso="miso")
+                    logger.info(f"  → BC stored: {len(day_bc_df)} rows")
+                else:
+                    store.mark_day_exhausted(day_str, "bc", 0, 0, iso="miso")
+                    logger.info(f"  → BC: no binding constraints (marked complete)")
+            else:
+                store.mark_day_exhausted(day_str, "bc", 0, 0, iso="miso")
+                logger.info(f"  → BC: no yearly data loaded (marked complete)")
+
+        # ── 2. LMPs ──
+        if store.manifest_status(day_str, "lmp", iso="miso") == "complete" and not force:
+            logger.info(f"  LMP {day}: already complete, skipping")
+        else:
+            date_key_yyyymmdd = day.strftime('%Y%m%d')
+            url = f"https://docs.misoenergy.org/marketreports/{date_key_yyyymmdd}_rt_lmp_final.csv"
+            logger.info(f"  LMP {day}: fetching daily file from {url} ...")
+            
+            await asyncio.sleep(delay)
+            
+            try:
+                def _get():
+                    res = requests.get(url, timeout=20)
+                    if res.status_code == 404:
+                        return None
+                    res.raise_for_status()
+                    return res.text
+                    
+                csv_text = await asyncio.to_thread(_get)
+                if csv_text:
+                    raw_df = pd.read_csv(StringIO(csv_text), skiprows=4)
+                    day_lmp_df = parse_miso_lmp(raw_df, day_str)
+                    if not day_lmp_df.empty:
+                        # Group by UTC date and write each group separately
+                        groups = day_lmp_df.groupby(pd.to_datetime(day_lmp_df["interval"]).dt.date)
+                        for utc_date, group_df in groups:
+                            store.write_interval(pd.DataFrame(columns=["interval", "constraint_name"]), lmp_df=group_df, iso="miso")
+                        logger.info(f"  → LMP stored: {day_lmp_df['interval'].nunique()} intervals, {len(day_lmp_df)} rows")
+                    else:
+                        logger.warning(f"  → LMP: parsed data is empty for {day}")
+                else:
+                    logger.warning(f"  → LMP: 404 - report not published yet for {day} (will retry later)")
+            except Exception as e:
+                logger.error(f"  → LMP error fetching {day}: {e}")
+
+        save_checkpoint(day, "miso")
+        pct = idx / total_days * 100
+        logger.info(f"  Progress: {idx}/{total_days} ({pct:.0f}%)")
+
+    clear_checkpoint("miso")
+    logger.info("=" * 60)
+    logger.info("MISO Backfill complete.")
+
+
+async def backfill_spp(
     start: date_type,
     end: date_type,
     store: DuckDBStore,
@@ -238,10 +434,10 @@ async def backfill(
     force: bool = False,
 ) -> None:
     all_days = generate_days(start, end)
-    logger.info(f"Backfill range: {start} → {end}  ({len(all_days)} days)")
+    logger.info(f"SPP Backfill range: {start} → {end}  ({len(all_days)} days)")
 
     if dry_run:
-        manifest = store.read_manifest()
+        manifest = store.read_manifest(iso="spp")
         logger.info("DRY RUN — manifest status per day:")
         for d in all_days:
             key = d.isoformat()
@@ -250,27 +446,24 @@ async def backfill(
             flag = "✓" if bc == "complete" and lmp == "complete" else "✗"
             logger.info(f"  {flag} {key}  BC={bc:<8} LMP={lmp}")
         to_fetch = [d for d in all_days
-                    if store.manifest_status(d.isoformat(), "bc")  != "complete"
-                    or store.manifest_status(d.isoformat(), "lmp") != "complete"]
+                    if store.manifest_status(d.isoformat(), "bc", iso="spp")  != "complete"
+                    or store.manifest_status(d.isoformat(), "lmp", iso="spp") != "complete"]
         est = len(to_fetch) * 288 * (delay * 1.1) / 3600
         logger.info(f"  {len(to_fetch)} days would be fetched. Estimated time: {est:.1f} hours")
         return
 
-    # Resume from checkpoint (coarse-grained day skip used only when manifest
-    # is absent or force=True prevents manifest use)
-    checkpoint = load_checkpoint()
+    checkpoint = load_checkpoint("spp")
     if checkpoint and force:
-        clear_checkpoint()  # force overrides checkpoint too
+        clear_checkpoint("spp")
 
-    # Determine which days still need work using the manifest
     if force:
         days_to_process = all_days
         logger.info("--force: re-fetching all days regardless of manifest")
     else:
         days_to_process = [
             d for d in all_days
-            if store.manifest_status(d.isoformat(), "bc")  != "complete"
-            or store.manifest_status(d.isoformat(), "lmp") != "complete"
+            if store.manifest_status(d.isoformat(), "bc", iso="spp")  != "complete"
+            or store.manifest_status(d.isoformat(), "lmp", iso="spp") != "complete"
         ]
         skipped = len(all_days) - len(days_to_process)
         if skipped:
@@ -285,7 +478,7 @@ async def backfill(
 
     bc_scraper  = RTConstraintsScraper()
     lmp_scraper = RTBMLMPScraper()
-    semaphore   = asyncio.Semaphore(1)   # 1 concurrent request — polite
+    semaphore   = asyncio.Semaphore(1)
 
     col_rename = {
         "Constraint Name":     "constraint_name",
@@ -295,14 +488,14 @@ async def backfill(
         "MCC":                 "mcc",
     }
 
-    BATCH_SIZE = 12  # Write LMP every 12 intervals (~1 hour) — safe against interruptions
-
+    BATCH_SIZE = 12
     total_days = len(days_to_process)
+    
     for idx, day in enumerate(days_to_process, 1):
-        logger.info(f"[{idx}/{total_days}] Fetching {day} ...")
+        logger.info(f"[{idx}/{total_days}] Fetching SPP data for {day} ...")
 
-        # ── 1. Daily BC aggregate (1 request) — skip if already stored ──
-        if bc_already_stored(store, day):
+        # ── 1. Daily BC aggregate ──
+        if bc_already_stored(store, day, iso="spp") and not force:
             logger.info(f"  BC {day}: already stored, skipping")
         else:
             bc_df = await fetch_daily_bc(bc_scraper, day)
@@ -313,29 +506,27 @@ async def backfill(
                 bc_df.columns = [c.lower() for c in bc_df.columns]
                 if "interval" in bc_df.columns:
                     bc_df["interval"] = pd.to_datetime(bc_df["interval"], errors="coerce")
-                store.write_interval(bc_df)
+                store.write_interval(bc_df, iso="spp")
                 logger.info(f"  → BC stored: {len(bc_df)} rows")
             else:
                 logger.warning(f"  → BC: no data for {day}")
 
-        # ── 2. Per-interval LMP (288 requests, written in hourly batches) ─
-        if lmp_already_stored(store, day):
+        # ── 2. Per-interval LMP ──
+        if lmp_already_stored(store, day, iso="spp") and not force:
             logger.info(f"  LMP {day}: already stored (280+ intervals), skipping")
         else:
             intervals = generate_lmp_intervals(day)
-            # Skip intervals already on disk (mid-day restart resilience)
-            already_fetched = lmp_stored_intervals(store, day)
+            already_fetched = lmp_stored_intervals(store, day, iso="spp")
             if already_fetched:
                 intervals_to_fetch = [iv for iv in intervals if iv not in already_fetched]
                 logger.info(f"  LMP {day}: {len(already_fetched)} intervals on disk, "
                             f"fetching {len(intervals_to_fetch)} remaining")
             else:
                 intervals_to_fetch = intervals
-            ok   = len(already_fetched)  # credit already-stored intervals
+            ok   = len(already_fetched)
             miss = 0
             empty_bc = pd.DataFrame(columns=["interval", "constraint_name"])
 
-            # Process in batches of BATCH_SIZE — write after each batch
             for batch_start in range(0, len(intervals_to_fetch), BATCH_SIZE):
                 batch = intervals_to_fetch[batch_start:batch_start + BATCH_SIZE]
                 tasks = [
@@ -362,13 +553,11 @@ async def backfill(
 
                 if batch_frames:
                     combined = pd.concat(batch_frames, ignore_index=True)
-                    store.write_interval(empty_bc, lmp_df=combined)
+                    store.write_interval(empty_bc, lmp_df=combined, iso="spp")
 
-            # All intervals attempted — mark day exhausted so we never
-            # retry SPP data gaps (404s are genuine missing data, not errors)
             fetched   = ok
             attempted = ok + miss
-            store.mark_day_exhausted(day.isoformat(), "lmp", fetched, attempted)
+            store.mark_day_exhausted(day.isoformat(), "lmp", fetched, attempted, iso="spp")
             if ok > 0:
                 gaps = miss - len(already_fetched) if already_fetched else miss
                 msg  = f"  → LMP stored: {ok} intervals"
@@ -378,21 +567,14 @@ async def backfill(
             else:
                 logger.warning(f"  → LMP: no data for {day} — all 404s, marked complete")
 
-        save_checkpoint(day)
+        save_checkpoint(day, "spp")
         pct = idx / total_days * 100
         remaining_h = (total_days - idx) * 288 * (delay * 1.1) / 3600
         logger.info(f"  Progress: {idx}/{total_days} ({pct:.0f}%)  ETA ~{remaining_h:.1f}h")
 
-    clear_checkpoint()
+    clear_checkpoint("spp")
     logger.info("=" * 60)
-    logger.info("Backfill complete.")
-    stats = store.storage_stats()
-    for name, info in stats.items():
-        if isinstance(info, dict):
-            logger.info(
-                f"  {name}: {info['file_count']} files, {info['size_mb']} MB "
-                f"({info.get('oldest','?')} → {info.get('newest','?')})"
-            )
+    logger.info("SPP Backfill complete.")
 
 
 # ---------------------------------------------------------------------------
@@ -401,9 +583,12 @@ async def backfill(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Backfill SPP RTBM history (daily BC + per-interval LMP).",
+        description="Backfill SPP or MISO market history (daily BC + LMP).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--iso", type=str, default="spp", choices=["spp", "miso"],
+        help="ISO footprint to backfill (default: spp).",
     )
     parser.add_argument(
         "--days", type=int, default=21,
@@ -411,7 +596,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--start",  type=str,   default=None, help="Start date YYYY-MM-DD.")
     parser.add_argument("--end",    type=str,   default=None, help="End date YYYY-MM-DD (inclusive, default: yesterday).")
-    parser.add_argument("--delay",  type=float, default=2.0,  help="Base seconds between LMP requests (default: 2.0).")
+    parser.add_argument("--delay",  type=float, default=None,  help="Base seconds between requests (default: 2.0 for SPP, 1.0 for MISO).")
     parser.add_argument(
         "--force", action="store_true",
         help="Re-fetch all days regardless of manifest (use for revisions/corrections).",
@@ -426,21 +611,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    iso = args.iso.lower()
     now = datetime.now(UTC).date()
 
     end  = date_type.fromisoformat(args.end)   if args.end   else now - timedelta(days=1)
     start = date_type.fromisoformat(args.start) if args.start else end - timedelta(days=args.days - 1)
 
-    logger.info(f"SPP RTBM Historical Backfill")
+    logger.info(f"{iso.upper()} Market Historical Backfill")
     logger.info(f"Range: {start} \u2192 {end}  ({(end - start).days + 1} days)")
-    logger.info(f"Strategy: 1 daily BC file/day + 288 LMP interval files/day")
 
     store = DuckDBStore()
 
     if args.status:
         # Print manifest and exit — no downloads
-        manifest = store.read_manifest()
-        logger.info("Manifest status:")
+        manifest = store.read_manifest(iso=iso)
+        logger.info(f"Manifest status for {iso.upper()}:")
         d = start
         while d <= end:
             key = d.isoformat()
@@ -453,14 +638,26 @@ def main() -> None:
             d += timedelta(days=1)
         return
 
-    asyncio.run(backfill(
-        start=start,
-        end=end,
-        store=store,
-        delay=args.delay,
-        dry_run=args.dry_run,
-        force=args.force,
-    ))
+    delay = args.delay if args.delay is not None else (1.0 if iso == "miso" else 2.0)
+
+    if iso == "miso":
+        asyncio.run(backfill_miso(
+            start=start,
+            end=end,
+            store=store,
+            delay=delay,
+            dry_run=args.dry_run,
+            force=args.force,
+        ))
+    else:
+        asyncio.run(backfill_spp(
+            start=start,
+            end=end,
+            store=store,
+            delay=delay,
+            dry_run=args.dry_run,
+            force=args.force,
+        ))
 
 
 if __name__ == "__main__":

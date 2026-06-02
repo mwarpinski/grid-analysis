@@ -453,7 +453,11 @@ class DuckDBStore:
         intervals = df["interval"].nunique() if "interval" in df.columns else 0
         rows = len(df)
 
-        threshold = LMP_COMPLETE_THRESHOLD if data_type == "lmp" else 280
+        if iso.lower() == "miso":
+            threshold = 24 if data_type == "lmp" else 240
+        else:
+            threshold = LMP_COMPLETE_THRESHOLD if data_type == "lmp" else 280
+            
         existing_intervals = day_entry.get(data_type, {}).get("intervals", 0)
         total_intervals = max(intervals, existing_intervals)
 
@@ -514,8 +518,9 @@ class DuckDBStore:
                 df = pd.read_parquet(f, columns=["interval"])
                 n = df["interval"].nunique()
                 key = d.isoformat()
+                thresh = 240 if iso.lower() == "miso" else 280
                 manifest.setdefault(key, {})["bc"] = {
-                    "status":    "complete" if n >= 280 else "partial",
+                    "status":    "complete" if n >= thresh else "partial",
                     "intervals": n,
                     "rows":      len(pd.read_parquet(f)),
                     "stored_at": now_str,
@@ -532,8 +537,9 @@ class DuckDBStore:
                 df = pd.read_parquet(f, columns=["interval"])
                 n = df["interval"].nunique()
                 key = d.isoformat()
+                thresh = 24 if iso.lower() == "miso" else LMP_COMPLETE_THRESHOLD
                 manifest.setdefault(key, {})["lmp"] = {
-                    "status":    "complete" if n >= LMP_COMPLETE_THRESHOLD else "partial",
+                    "status":    "complete" if n >= thresh else "partial",
                     "intervals": n,
                     "rows":      len(pd.read_parquet(f)),
                     "stored_at": now_str,

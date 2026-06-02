@@ -220,15 +220,12 @@ def layer_a_ols_residual(
         b_sub = b[mask]
 
         try:
-            # Multi-collinearity mitigation: Solve as bounded L2-regularized least squares.
-            # Minimizes: ||A_sub x - b_sub||^2 + alpha * ||x||^2 subject to -1 <= x <= 1.
+            # Multi-collinearity mitigation: Solve analytically as L2-regularized least squares (Ridge).
+            # Then physically clip to [-1.0, 1.0].
             alpha = 0.05  # L2 regularization penalty
             K = A_sub.shape[1]
-            A_ext = np.vstack([A_sub, np.sqrt(alpha) * np.eye(K)])
-            b_ext = np.concatenate([b_sub, np.zeros(K)])
-            
-            res = lsq_linear(A_ext, b_ext, bounds=(-1.0, 1.0))
-            x = res.x
+            x = np.linalg.solve(A_sub.T @ A_sub + alpha * np.eye(K), A_sub.T @ b_sub)
+            x = np.clip(x, -1.0, 1.0)
             rank = K
             
             b_hat = A_sub @ x
@@ -237,7 +234,7 @@ def layer_a_ols_residual(
             r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-10 else 1.0
             resid_std = np.sqrt(ss_res / max(1, len(b_sub) - rank))
         except Exception as e:
-            logger.debug(f"  Bounded Ridge regression failed for {node}: {e}")
+            logger.debug(f"  Analytical Ridge regression failed for {node}: {e}")
             continue
 
         zone = zone_map.get(node, "UNKNOWN")
