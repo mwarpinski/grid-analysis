@@ -26,6 +26,7 @@ router = APIRouter(prefix="/api/v1/mcc", tags=["mcc"])
 @router.get("", response_model=MCCResponse)
 async def get_mcc(
     node: str = Query(..., description="Settlement location / price node"),
+    iso: str = Query("spp", description="ISO namespace: spp or miso"),
 ) -> MCCResponse:
     """
     **Pre-clearing MCC Estimator**
@@ -43,25 +44,26 @@ async def get_mcc(
     This is your pre-clearing price signal — call it every 5 minutes as
     soon as SPP publishes new shadow prices.
     """
-    if not cache.is_ready() or cache.solution is None:
+    iso_cache = cache.for_iso(iso)
+    if not iso_cache.is_ready() or iso_cache.solution is None:
         raise HTTPException(
             status_code=503,
             detail="Solver not ready — ingest worker still initializing."
         )
 
-    shadow_prices = cache.get_shadow_prices()
+    shadow_prices = iso_cache.get_shadow_prices()
     if not shadow_prices:
         raise HTTPException(
             status_code=503,
             detail="No current shadow prices available."
         )
 
-    mcc = cache.solution.compute_mcc(node, shadow_prices)
+    mcc = iso_cache.solution.compute_mcc(node, shadow_prices)
 
     # Build per-constraint contribution breakdown
     contributions: List[MCCContribution] = []
     for constraint, sp in shadow_prices.items():
-        sf = cache.solution.get(node, constraint)
+        sf = iso_cache.solution.get(node, constraint)
         contrib = (sf * sp) if sf is not None else 0.0
         contributions.append(MCCContribution(
             constraint=constraint,
@@ -88,6 +90,7 @@ async def get_mcc_all_nodes(
         description="Filter nodes with |MCC| below this threshold"
     ),
     limit: int = Query(200, ge=1, le=2000),
+    iso: str = Query("spp", description="ISO namespace: spp or miso"),
 ) -> List[dict]:
     """
     Returns estimated MCC for all nodes that have shift factors solved,
@@ -95,17 +98,18 @@ async def get_mcc_all_nodes(
 
     Use this to build a heatmap of nodal price pressure across the grid.
     """
-    if not cache.is_ready() or cache.solution is None:
+    iso_cache = cache.for_iso(iso)
+    if not iso_cache.is_ready() or iso_cache.solution is None:
         raise HTTPException(status_code=503, detail="Solver not ready.")
 
-    shadow_prices = cache.get_shadow_prices()
+    shadow_prices = iso_cache.get_shadow_prices()
     if not shadow_prices:
         return []
 
-    nodes = sorted({n for (n, _) in cache.solution._flat})
+    nodes = sorted({n for (n, _) in iso_cache.solution._flat})
     results = []
     for node in nodes:
-        mcc = cache.solution.compute_mcc(node, shadow_prices)
+        mcc = iso_cache.solution.compute_mcc(node, shadow_prices)
         if abs(mcc) >= min_abs_mcc:
             results.append({"node": node, "mcc": round(mcc, 4)})
 

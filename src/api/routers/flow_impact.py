@@ -36,21 +36,23 @@ async def calculate_flow_impact(body: FlowImpactRequest) -> FlowImpactResponse:
     - Sizing FTR positions
     - Identifying relief transactions when a constraint is near its limit
     """
-    if not cache.is_ready() or cache.solution is None:
+    iso = body.iso or "spp"
+    iso_cache = cache.for_iso(iso)
+    if not iso_cache.is_ready() or iso_cache.solution is None:
         raise HTTPException(
             status_code=503,
             detail="Shift factor solver not ready — ingest worker still initializing."
         )
 
-    delta_flow = cache.solution.flow_impact(
+    delta_flow = iso_cache.solution.flow_impact(
         source_node=body.source_node,
         sink_node=body.sink_node,
         mw=body.mw,
         constraint=body.constraint,
     )
 
-    sf_source = cache.solution.get(body.source_node, body.constraint)
-    sf_sink = cache.solution.get(body.sink_node, body.constraint)
+    sf_source = iso_cache.solution.get(body.source_node, body.constraint)
+    sf_sink = iso_cache.solution.get(body.sink_node, body.constraint)
 
     if delta_flow is None:
         missing = []
@@ -84,7 +86,7 @@ async def calculate_flow_impact(body: FlowImpactRequest) -> FlowImpactResponse:
         direction = "relieves"
 
     # Get shadow price for context
-    sp = cache.get_shadow_prices().get(body.constraint, 0.0)
+    sp = iso_cache.get_shadow_prices().get(body.constraint, 0.0)
     pnl_impact = delta_flow * sp  # $/hr impact on congestion cost
 
     if direction == "exacerbates":

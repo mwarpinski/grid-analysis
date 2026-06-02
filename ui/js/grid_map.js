@@ -26,7 +26,7 @@ let constraintLineIndex = {};  // constraintName (lower) → Leaflet polyline
 function loadingColor(pct) {
   if (pct == null) return null;
   if (pct >= 95) return '#ef4444';
-  if (pct >= 90) return '#f97316';
+  if (pct >= 85) return '#f97316';
   if (pct >= 70) return '#eab308';
   return '#22c55e';
 }
@@ -155,7 +155,7 @@ function updateMapColors(constraints) {
     const col  = loadingColor(pct) || voltageColor(kv);
     layer.setStyle({
       color: col,
-      weight: pct >= 90 ? w * 2 : w,
+      weight: pct >= 85 ? w * 2 : w,
       opacity: pct != null ? 0.95 : 0.6,
     });
   });
@@ -180,7 +180,7 @@ async function showSFHeatmap(constraintName) {
   let data;
   try {
     data = await api.get(
-      `/api/v1/shift-factors/heatmap?constraint=${encodeURIComponent(constraintName)}`
+      `/api/v1/shift-factors/heatmap?constraint=${encodeURIComponent(constraintName)}&iso=${window.currentISO || 'spp'}`
     );
   } catch (e) {
     // Solver not ready or no data — just highlight the line if it exists

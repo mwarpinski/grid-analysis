@@ -26,20 +26,22 @@ function renderConstraintsTable(rows) {
 
   const tbody = document.getElementById('constraint-tbody');
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No constraints match filters.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No constraints match filters.</td></tr>';
     return;
   }
 
   tbody.innerHTML = filtered.map(r => {
     const pct     = r.pct_of_limit != null ? r.pct_of_limit.toFixed(1) + '%' : '—';
+    const vol     = r.volatility_score != null ? r.volatility_score.toFixed(2) : '0.00';
     const sp      = r.shadow_price != null ? '$' + r.shadow_price.toLocaleString(undefined, {maximumFractionDigits:0}) : '—';
     const state   = r.state || '—';
     const stateClass = `state-${state.replace(/\s/g,'_')}`;
-    const rowClass = r.pct_of_limit >= 95 ? 'row-binding' : r.pct_of_limit >= 70 ? 'row-near-limit' : '';
+    const rowClass = r.pct_of_limit >= 95 ? 'row-binding' : r.pct_of_limit >= 85 ? 'row-near-limit-orange' : r.pct_of_limit >= 70 ? 'row-near-limit' : '';
     return `<tr class="${rowClass}" data-name="${escHtml(r.constraint_name)}">
       <td title="${escHtml(r.constraint_name)}">${escHtml(truncate(r.constraint_name,30))}</td>
       <td>${sp}</td>
       <td>${pct}</td>
+      <td>${vol}</td>
       <td><span class="state-pill ${stateClass}">${escHtml(state)}</span></td>
     </tr>`;
   }).join('');
@@ -57,7 +59,7 @@ function renderConstraintsTable(rows) {
   document.getElementById('binding-count').textContent =
     rows.filter(r => r.state === 'BINDING').length + ' binding';
   document.getElementById('near-limit-count').textContent =
-    rows.filter(r => r.pct_of_limit >= 90 && r.pct_of_limit < 95).length + ' near limit';
+    rows.filter(r => r.pct_of_limit >= 85 && r.state !== 'BINDING').length + ' near limit';
 }
 
 function initConstraintsTable() {

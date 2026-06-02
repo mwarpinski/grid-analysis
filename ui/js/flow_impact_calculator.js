@@ -24,6 +24,7 @@ function initFlowImpactCalculator() {
       sink_node:   document.getElementById('wi-sink').value.trim(),
       mw:          parseFloat(mwSlider.value),
       constraint:  document.getElementById('wi-constraint').value.trim(),
+      iso:         window.currentISO || 'spp',
     };
 
     const result = document.getElementById('wi-result');

@@ -73,6 +73,34 @@ html, body {
 .nav-btn:hover { background: var(--glass); color: var(--text); }
 .nav-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+.iso-selector-wrap {
+  display: flex;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  padding: 2px;
+  margin-left: 1.5rem;
+}
+.iso-selector-btn {
+  padding: .3rem .85rem;
+  border: none;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--text-dim);
+  font: 11px/1.2 var(--font);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.iso-selector-btn:hover {
+  color: var(--text);
+}
+.iso-selector-btn.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(0, 102, 204, 0.3);
+}
+
 /* ─── Main panels ────────────────────────────────────────────────────── */
 #app-main {
   position: fixed; top: var(--header-h); left: 0; right: 0; bottom: 0;
@@ -156,6 +184,7 @@ html, body {
 }
 .data-table tbody tr:hover { background: rgba(59,130,246,.08); }
 .data-table tbody tr.row-binding { background: rgba(239,68,68,.06); }
+.data-table tbody tr.row-near-limit-orange { background: rgba(249,115,22,.08); }
 .data-table tbody tr.row-near-limit { background: rgba(234,179,8,.06); }
 .data-table tbody tr.selected { background: rgba(59,130,246,.15) !important; }
 .data-table td { padding: .45rem .75rem; font-size: 11px; font-family: var(--mono); }
@@ -168,7 +197,9 @@ html, body {
 }
 .state-BINDING   { background: var(--red-bg);   color: var(--red); }
 .state-VIOLATED  { background: rgba(239,68,68,.3); color: #fca5a5; }
+.state-BREACHED   { background: rgba(239,68,68,.3); color: #fca5a5; }
 .state-NEAR_BINDING { background: var(--amber-bg); color: var(--amber); }
+.state-ACTIVATED   { background: rgba(59,130,246,.15); color: #60a5fa; }
 
 /* ─── Map ────────────────────────────────────────────────────────────── */
 .col-map { position: relative; }

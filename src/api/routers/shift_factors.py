@@ -79,6 +79,7 @@ async def get_shift_factor(
     shadow_price: Optional[float] = Query(
         None, description="If provided, also returns sf_exposure = SF × SP"
     ),
+    iso: str = Query("spp", description="ISO namespace: spp or miso"),
 ) -> SingleSFResponse:
     """
     Look up the shift factor (PTDF) for a single node / constraint pair.
@@ -87,14 +88,15 @@ async def get_shift_factor(
     (GSF × ShadowPrice) — the core trader metric showing how much $/MWh of
     congestion cost this node-constraint relationship drives.
     """
-    if not cache.is_ready() or cache.solution is None:
+    iso_cache = cache.for_iso(iso)
+    if not iso_cache.is_ready() or iso_cache.solution is None:
         raise HTTPException(
             status_code=503,
             detail="Shift factor solver not yet ready — ingest worker still initializing."
         )
 
-    sf = cache.solution.get(node, constraint)
-    sp = shadow_price if shadow_price is not None else cache.get_shadow_prices().get(constraint)
+    sf = iso_cache.solution.get(node, constraint)
+    sp = shadow_price if shadow_price is not None else iso_cache.get_shadow_prices().get(constraint)
     exposure = (sf * sp) if (sf is not None and sp is not None) else None
 
     return SingleSFResponse(
@@ -122,6 +124,7 @@ async def get_sf_exposure_table(
         description="Filter out nodes with |sf_exposure| below this threshold"
     ),
     limit: int = Query(100, ge=1, le=1000, description="Max nodes to return"),
+    iso: str = Query("spp", description="ISO namespace: spp or miso"),
 ) -> ShiftFactorTableResponse:
     """
     Returns the full shift factor exposure table for a constraint, sorted by
@@ -131,19 +134,20 @@ async def get_sf_exposure_table(
     it shows exactly how much congestion cost contribution each node carries
     at the current shadow price — even a 2% SF matters at a $2,000 shadow price.
     """
-    if not cache.is_ready() or cache.solution is None:
+    iso_cache = cache.for_iso(iso)
+    if not iso_cache.is_ready() or iso_cache.solution is None:
         raise HTTPException(status_code=503, detail="Solver not ready.")
 
     # Resolve shadow price
     sp = shadow_price
     if sp is None:
-        sp = cache.get_shadow_prices().get(constraint)
+        sp = iso_cache.get_shadow_prices().get(constraint)
 
     # Always pass a dict (even empty) so to_dataframe() always returns
     # named columns (node, constraint, shift_factor). Passing None returns
     # a bare RangeIndex DataFrame with no columns → KeyError on filter.
     sp_map = {constraint: sp} if sp is not None else {}
-    df = cache.solution.to_dataframe(shadow_prices=sp_map)
+    df = iso_cache.solution.to_dataframe(shadow_prices=sp_map)
 
     if df.empty or "constraint" not in df.columns:
         raise HTTPException(
@@ -187,20 +191,26 @@ async def get_sf_exposure_table(
 
 
 @router.get("/all-constraints", response_model=List[str])
-async def list_solved_constraints() -> List[str]:
+async def list_solved_constraints(
+    iso: str = Query("spp", description="ISO namespace: spp or miso")
+) -> List[str]:
     """Returns the list of constraint names for which SFs have been solved."""
-    if not cache.is_ready() or cache.solution is None:
+    iso_cache = cache.for_iso(iso)
+    if not iso_cache.is_ready() or iso_cache.solution is None:
         return []
-    constraints = sorted({c for (_, c) in cache.solution._flat})
+    constraints = sorted({c for (_, c) in iso_cache.solution._flat})
     return constraints
 
 
 @router.get("/all-nodes", response_model=List[str])
-async def list_solved_nodes() -> List[str]:
+async def list_solved_nodes(
+    iso: str = Query("spp", description="ISO namespace: spp or miso")
+) -> List[str]:
     """Returns the list of nodes for which SFs have been solved."""
-    if not cache.is_ready() or cache.solution is None:
+    iso_cache = cache.for_iso(iso)
+    if not iso_cache.is_ready() or iso_cache.solution is None:
         return []
-    nodes = sorted({n for (n, _) in cache.solution._flat})
+    nodes = sorted({n for (n, _) in iso_cache.solution._flat})
     return nodes
 
 
@@ -210,44 +220,24 @@ async def get_sf_heatmap(
     shadow_price: Optional[float] = Query(
         None, description="Override shadow price; uses live value if omitted."
     ),
+    iso: str = Query("spp", description="ISO namespace: spp or miso"),
 ):
     """
     **SF Zone Heatmap** — for map overlay rendering.
 
-    Groups all solved shift factors for a constraint by SPP pricing zone
-    (e.g. WR, KCPL, OKGE) and returns zone-level aggregates with lat/lon
-    centroids for Leaflet circle rendering.
-
-    Zones are SPP market pricing zones — public information at the same
-    resolution as any ISO zone map. No individual substation locations.
-
-    Response shape:
-    ```json
-    {
-      "constraint": "LN HARBINE - BEATRICE",
-      "shadow_price": 450.0,
-      "n_nodes_total": 612,
-      "n_nodes_mapped": 540,
-      "zones": [
-        {
-          "zone": "WR", "name": "Evergy Kansas",
-          "lat": 38.7, "lon": -97.0,
-          "mean_sf": 0.23, "max_abs_sf": 0.41,
-          "n_nodes": 32, "direction": "exacerbates"
-        }, ...
-      ]
-    }
-    ```
+    Groups all solved shift factors for a constraint by pricing zone
+    and returns zone-level aggregates with lat/lon centroids for Leaflet circle rendering.
     """
-    if cache.solution is None:
+    iso_cache = cache.for_iso(iso)
+    if iso_cache.solution is None:
         raise HTTPException(status_code=503, detail="SF solution not yet ready.")
 
-    sp = shadow_price or cache.get_shadow_prices().get(constraint)
+    sp = shadow_price or iso_cache.get_shadow_prices().get(constraint)
 
     # Collect all (node, sf) pairs for this constraint
     pairs = [
         (node, sf)
-        for (node, c), sf in cache.solution._flat.items()
+        for (node, c), sf in iso_cache.solution._flat.items()
         if c == constraint
     ]
 
@@ -264,15 +254,19 @@ async def get_sf_heatmap(
     unmapped = 0
 
     for node, sf in pairs:
-        zone = _node_to_zone(node)
-        if zone:
-            zone_sfs[zone].append(sf)
+        if iso.lower() == "spp":
+            zone = _node_to_zone(node)
+            if zone:
+                zone_sfs[zone].append(sf)
+            else:
+                unmapped += 1
         else:
-            unmapped += 1
+            parts = re.split(r'[._-]', node)
+            zone = parts[0].upper() if parts else "UNKNOWN"
+            zone_sfs[zone].append(sf)
 
     zones = []
     for zone_code, sfs in zone_sfs.items():
-        meta = _SPP_ZONES[zone_code]
         arr = np.array(sfs)
         mean_sf = float(np.mean(arr))
         max_abs = float(np.max(np.abs(arr)))
@@ -285,11 +279,17 @@ async def get_sf_heatmap(
         else:
             direction = "relieves"
 
+        lat, lon, name = 39.0, -89.0, f"MISO Zone {zone_code}"
+        if iso.lower() == "spp" and zone_code in _SPP_ZONES:
+            lat = _SPP_ZONES[zone_code]["lat"]
+            lon = _SPP_ZONES[zone_code]["lon"]
+            name = _SPP_ZONES[zone_code]["name"]
+
         zones.append({
             "zone":        zone_code,
-            "name":        meta["name"],
-            "lat":         meta["lat"],
-            "lon":         meta["lon"],
+            "name":        name,
+            "lat":         lat,
+            "lon":         lon,
             "mean_sf":     round(mean_sf, 5),
             "max_abs_sf":  round(max_abs, 5),
             "n_nodes":     len(sfs),

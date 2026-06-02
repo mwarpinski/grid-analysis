@@ -335,12 +335,16 @@ grid-analysis/
 
 ---
 
-## What's next (roadmap)
+## Roadmap & Status
+
+All core architecture phases are complete:
 
 | Phase | Feature | Status |
 |---|---|---|
-| 13 | **Shadow price forecasting** — persistence model + gradient boosting (XGBoost) | 🔲 Not started |
-| 14 | **LLM constraint resolver** — use mcp-agent to auto-resolve ambiguous constraint names | 🔲 Not started |
-| 15 | **MCP server exposure** — expose shift factor tools to Claude Desktop and other MCP clients | 🔲 Not started |
+| **1–8** | Core analytical libraries (SF solver, scrapers, normalizer, DuckDB time-series store) | ✅ Complete |
+| **9–12** | FastAPI server, WebSocket feeds, Trading Dashboard UI, Portfolio risk engine, and historical DVR replay player | ✅ Complete |
+| **13** | **Shadow price forecasting** — Gradient Boosting models with AutoML-based configuration selection (loss and target transform tuning) and persistent fallback logic | ✅ Complete |
+| **14** | **LLM constraint resolver** — Automated resolution of ambiguous or truncated constraint names using structured LLM classification | ✅ Complete |
+| **15** | **MCP server exposure** — TypeScript/Node-based MCP server exposing key analytical tools (shift factor solver, bilateral flow impact, portfolio risk) to MCP clients | ✅ Complete |
 
-Phases 9–12 (server, UI, portfolio engine, replay, validation) are complete.
+The platform is fully operational, retrained, and verified.

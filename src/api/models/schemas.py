@@ -27,6 +27,7 @@ class ConstraintSnapshot(BaseModel):
     pct_of_limit: Optional[float] = None
     state: Optional[str] = None
     contingency_name: Optional[str] = None
+    volatility_score: Optional[float] = None
 
 
 class LiveConstraintsResponse(BaseModel):
@@ -73,6 +74,7 @@ class FlowImpactRequest(BaseModel):
     sink_node: str = Field(..., description="Withdrawal node")
     mw: float = Field(..., gt=0, description="Bilateral MW injection (must be positive)")
     constraint: str = Field(..., description="Constraint name to evaluate")
+    iso: Optional[str] = Field("spp", description="ISO namespace: spp or miso")
 
 
 class FlowImpactResponse(BaseModel):

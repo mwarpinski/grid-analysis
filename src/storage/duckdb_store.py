@@ -77,20 +77,67 @@ class DuckDBStore:
     ) -> None:
         self.data_dir = Path(data_dir)
         self.retention_days = retention_days
-        self._constraints_dir = self.data_dir / "constraints"
-        self._lmp_dir         = self.data_dir / "lmp"
-        self._sf_dir          = self.data_dir / "shift_factors"
-        self._manifest_path   = self.data_dir / "manifest.json"
 
-        for d in (self._constraints_dir, self._lmp_dir, self._sf_dir):
-            d.mkdir(parents=True, exist_ok=True)
+        # Ensure directories exist for both SPP and MISO
+        for iso in ("spp", "miso"):
+            self._constraints_dir_for_iso(iso)
+            self._lmp_dir_for_iso(iso)
+            self._sf_dir_for_iso(iso)
 
         # Track last pruning run — prune at most once per calendar day
         self._last_pruned: Optional[datetime] = None
 
-        # Bootstrap manifest from existing Parquet files if it doesn't exist
-        if not self._manifest_path.exists():
-            self._refresh_manifest_from_files()
+        # Bootstrap manifests from existing Parquet files if they don't exist
+        for iso in ("spp", "miso"):
+            if not self._manifest_path_for_iso(iso).exists():
+                self._refresh_manifest_from_files(iso)
+
+    def _iso_dir(self, iso: str) -> Path:
+        """Get the base directory for a specific ISO, preserving legacy SPP pathing."""
+        iso = iso.lower()
+        if iso == "spp":
+            spp_dir = self.data_dir / "spp"
+            if spp_dir.exists() and any(spp_dir.iterdir()):
+                return spp_dir
+            return self.data_dir
+        return self.data_dir / iso
+
+    def _constraints_dir_for_iso(self, iso: str) -> Path:
+        d = self._iso_dir(iso) / "constraints"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _lmp_dir_for_iso(self, iso: str) -> Path:
+        d = self._iso_dir(iso) / "lmp"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _sf_dir_for_iso(self, iso: str) -> Path:
+        d = self._iso_dir(iso) / "shift_factors"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _manifest_path_for_iso(self, iso: str) -> Path:
+        d = self._iso_dir(iso)
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "manifest.json"
+
+    # Properties to maintain backward compatibility with direct attribute access for SPP
+    @property
+    def _constraints_dir(self) -> Path:
+        return self._constraints_dir_for_iso("spp")
+
+    @property
+    def _lmp_dir(self) -> Path:
+        return self._lmp_dir_for_iso("spp")
+
+    @property
+    def _sf_dir(self) -> Path:
+        return self._sf_dir_for_iso("spp")
+
+    @property
+    def _manifest_path(self) -> Path:
+        return self._manifest_path_for_iso("spp")
 
     # ------------------------------------------------------------------
     # Writes
@@ -100,6 +147,7 @@ class DuckDBStore:
         self,
         constraints_df: pd.DataFrame,
         lmp_df: Optional[pd.DataFrame] = None,
+        iso: str = "spp",
     ) -> None:
         """
         Persist a single interval's constraint + LMP data to Parquet.
@@ -130,18 +178,18 @@ class DuckDBStore:
         if has_constraints:
             self._append_parquet(
                 df=constraints_df,
-                directory=self._constraints_dir,
+                directory=self._constraints_dir_for_iso(iso),
                 filename=f"constraints_{date_str}.parquet",
             )
-            self._update_manifest(date_key, "bc", constraints_df)
+            self._update_manifest(date_key, "bc", constraints_df, iso=iso)
 
         if has_lmp:
             self._append_parquet(
                 df=lmp_df,
-                directory=self._lmp_dir,
+                directory=self._lmp_dir_for_iso(iso),
                 filename=f"lmp_{date_str}.parquet",
             )
-            self._update_manifest(date_key, "lmp", lmp_df)
+            self._update_manifest(date_key, "lmp", lmp_df, iso=iso)
 
         # Once-per-day retention pruning
         self._maybe_prune()
@@ -151,6 +199,7 @@ class DuckDBStore:
         sf_df: pd.DataFrame,
         solved_at: Optional[datetime] = None,
         r2_scores: Optional[dict] = None,
+        iso: str = "spp",
     ) -> None:
         """Persist a shift factor matrix snapshot."""
         if sf_df.empty:
@@ -166,7 +215,7 @@ class DuckDBStore:
         date_str = solved_at.strftime("%Y%m%d")
         self._append_parquet(
             df=df,
-            directory=self._sf_dir,
+            directory=self._sf_dir_for_iso(iso),
             filename=f"shift_factors_{date_str}.parquet",
         )
 
@@ -188,33 +237,38 @@ class DuckDBStore:
         today  = datetime.utcnow().date()
         summary: dict = {}
 
-        for subdir in (self._constraints_dir, self._lmp_dir, self._sf_dir):
-            deleted, kept, freed_bytes = 0, 0, 0
-            for path in sorted(subdir.glob("*.parquet")):
-                # Parse date from filename stem, e.g. "constraints_20240101"
-                parts = path.stem.rsplit("_", 1)
-                if len(parts) != 2:
-                    kept += 1
-                    continue
-                try:
-                    file_date = datetime.strptime(parts[1], "%Y%m%d").date()
-                except ValueError:
-                    kept += 1
-                    continue
+        for iso in ("spp", "miso"):
+            constraints_dir = self._constraints_dir_for_iso(iso)
+            lmp_dir = self._lmp_dir_for_iso(iso)
+            sf_dir = self._sf_dir_for_iso(iso)
+            for subdir in (constraints_dir, lmp_dir, sf_dir):
+                deleted, kept, freed_bytes = 0, 0, 0
+                for path in sorted(subdir.glob("*.parquet")):
+                    # Parse date from filename stem, e.g. "constraints_20240101"
+                    parts = path.stem.rsplit("_", 1)
+                    if len(parts) != 2:
+                        kept += 1
+                        continue
+                    try:
+                        file_date = datetime.strptime(parts[1], "%Y%m%d").date()
+                    except ValueError:
+                        kept += 1
+                        continue
 
-                if file_date < cutoff and file_date < today:
-                    freed_bytes += path.stat().st_size
-                    path.unlink()
-                    deleted += 1
-                    logger.info(f"Retention pruner: deleted {path.name} ({file_date})")
-                else:
-                    kept += 1
+                    if file_date < cutoff and file_date < today:
+                        freed_bytes += path.stat().st_size
+                        path.unlink()
+                        deleted += 1
+                        logger.info(f"Retention pruner ({iso}): deleted {path.name} ({file_date})")
+                    else:
+                        kept += 1
 
-            summary[subdir.name] = {
-                "deleted": deleted,
-                "kept": kept,
-                "freed_mb": round(freed_bytes / 1_048_576, 2),
-            }
+                key = f"{iso}/{subdir.name}"
+                summary[key] = {
+                    "deleted": deleted,
+                    "kept": kept,
+                    "freed_mb": round(freed_bytes / 1_048_576, 2),
+                }
 
         total_freed = sum(v["freed_mb"] for v in summary.values())
         if total_freed > 0:
@@ -228,15 +282,18 @@ class DuckDBStore:
         self._last_pruned = datetime.utcnow()
         return summary
 
-    def storage_stats(self) -> dict:
+    def storage_stats(self, iso: str = "spp") -> dict:
         """
-        Return disk usage and file counts for each data subdirectory.
+        Return disk usage and file counts for each data subdirectory for an ISO.
 
         Useful for the /api/v1/status endpoint and ad-hoc inspection.
         """
         stats: dict = {}
         total_bytes = 0
-        for subdir in (self._constraints_dir, self._lmp_dir, self._sf_dir):
+        constraints_dir = self._constraints_dir_for_iso(iso)
+        lmp_dir = self._lmp_dir_for_iso(iso)
+        sf_dir = self._sf_dir_for_iso(iso)
+        for subdir in (constraints_dir, lmp_dir, sf_dir):
             files = sorted(subdir.glob("*.parquet"))
             size  = sum(f.stat().st_size for f in files)
             total_bytes += size
@@ -275,6 +332,7 @@ class DuckDBStore:
         end: str | datetime,
         constraint_name: Optional[str] = None,
         min_shadow_price: Optional[float] = None,
+        iso: str = "spp",
     ) -> pd.DataFrame:
         """
         Query constraint history for a date range.
@@ -287,12 +345,14 @@ class DuckDBStore:
             Filter to one constraint.
         min_shadow_price : float, optional
             Filter by minimum |shadow_price|.
+        iso : str, optional
+            The ISO namespace to query.
 
         Returns
         -------
         DataFrame sorted by interval ascending.
         """
-        parquet_pattern = str(self._constraints_dir / "constraints_*.parquet")
+        parquet_pattern = str(self._constraints_dir_for_iso(iso) / "constraints_*.parquet")
         return self._query(
             parquet_pattern=parquet_pattern,
             start=start,
@@ -308,9 +368,10 @@ class DuckDBStore:
         start: str | datetime,
         end: str | datetime,
         node: Optional[str] = None,
+        iso: str = "spp",
     ) -> pd.DataFrame:
         """Query LMP (MCC component) history."""
-        parquet_pattern = str(self._lmp_dir / "lmp_*.parquet")
+        parquet_pattern = str(self._lmp_dir_for_iso(iso) / "lmp_*.parquet")
         extra = f"AND settlement_location = '{node}'" if node else ""
         return self._query(parquet_pattern, start=start, end=end, extra_filters=extra)
 
@@ -318,59 +379,42 @@ class DuckDBStore:
         self,
         start: str | datetime,
         end: str | datetime,
+        iso: str = "spp",
     ) -> list[datetime]:
         """Return sorted list of available interval timestamps in range."""
-        df = self.query_constraints(start=start, end=end)
+        df = self.query_constraints(start=start, end=end, iso=iso)
         if df.empty or "interval" not in df.columns:
             return []
         return sorted(pd.to_datetime(df["interval"]).unique().tolist())
 
-    def get_snapshot(self, interval: str | datetime) -> pd.DataFrame:
+    def get_snapshot(self, interval: str | datetime, iso: str = "spp") -> pd.DataFrame:
         """Return constraint state at a specific interval."""
         ts = pd.Timestamp(interval)
         start = ts - pd.Timedelta(seconds=30)
         end = ts + pd.Timedelta(seconds=30)
-        return self.query_constraints(start=start, end=end)
+        return self.query_constraints(start=start, end=end, iso=iso)
 
     # ------------------------------------------------------------------
     # Manifest — tracks per-day download status for the backfill
     # ------------------------------------------------------------------
 
-    def read_manifest(self) -> dict:
+    def read_manifest(self, iso: str = "spp") -> dict:
         """
         Return the full manifest dict.
-
-        Schema::
-
-            {
-              "2026-05-07": {
-                "bc":  {"status": "complete"|"partial"|"missing",
-                        "intervals": 288, "rows": 14297,
-                        "stored_at": "2026-05-28T14:00:00"},
-                "lmp": {"status": "complete"|"partial"|"missing",
-                        "intervals": 288, "rows": 456032,
-                        "stored_at": "2026-05-28T15:00:00"}
-              },
-              ...
-            }
         """
-        if self._manifest_path.exists():
+        manifest_path = self._manifest_path_for_iso(iso)
+        if manifest_path.exists():
             try:
-                return json.loads(self._manifest_path.read_text())
+                return json.loads(manifest_path.read_text())
             except Exception:
                 pass
         return {}
 
-    def manifest_status(self, date_key: str, data_type: str) -> str:
+    def manifest_status(self, date_key: str, data_type: str, iso: str = "spp") -> str:
         """
         Return the status for a specific day/type: 'complete', 'partial', or 'missing'.
-
-        Parameters
-        ----------
-        date_key  : str  e.g. '2026-05-07'
-        data_type : str  'bc' or 'lmp'
         """
-        manifest = self.read_manifest()
+        manifest = self.read_manifest(iso=iso)
         entry = manifest.get(date_key, {}).get(data_type, {})
         return entry.get("status", "missing")
 
@@ -380,19 +424,13 @@ class DuckDBStore:
         end: str,
         data_type: str = "lmp",
         include_partial: bool = True,
+        iso: str = "spp",
     ) -> list[str]:
         """
-        Return a sorted list of date strings that are missing or partial
-        for the given data_type between start and end (inclusive).
-
-        Parameters
-        ----------
-        start, end    : str  e.g. '2026-05-07'
-        data_type     : str  'bc' or 'lmp'
-        include_partial : bool  If True, partial days are returned as missing.
+        Return a sorted list of date strings that are missing or partial.
         """
         from datetime import date, timedelta
-        manifest = self.read_manifest()
+        manifest = self.read_manifest(iso=iso)
         start_d = date.fromisoformat(start)
         end_d   = date.fromisoformat(end)
         missing = []
@@ -406,10 +444,10 @@ class DuckDBStore:
         return missing
 
     def _update_manifest(
-        self, date_key: str, data_type: str, df: pd.DataFrame
+        self, date_key: str, data_type: str, df: pd.DataFrame, iso: str = "spp"
     ) -> None:
         """Update the manifest entry for date_key/data_type after a write."""
-        manifest = self.read_manifest()
+        manifest = self.read_manifest(iso=iso)
         day_entry = manifest.setdefault(date_key, {})
 
         intervals = df["interval"].nunique() if "interval" in df.columns else 0
@@ -428,25 +466,19 @@ class DuckDBStore:
         }
 
         try:
-            self._manifest_path.write_text(
+            self._manifest_path_for_iso(iso).write_text(
                 json.dumps(manifest, indent=2, sort_keys=True)
             )
         except Exception as e:
             logger.warning(f"Manifest write failed: {e}")
 
     def mark_day_exhausted(
-        self, date_key: str, data_type: str, fetched: int, attempted: int
+        self, date_key: str, data_type: str, fetched: int, attempted: int, iso: str = "spp"
     ) -> None:
         """
-        Mark a day/data_type as fully attempted, even if below the normal
-        interval threshold.  Called after all intervals have been tried —
-        if SPP returned 404s for the missing slots those are genuine data
-        gaps and retrying will never help.
-
-        Sets status to 'complete' regardless of interval count and records
-        fetched/attempted/spp_gaps for auditability.
+        Mark a day/data_type as fully attempted, even if below the normal interval threshold.
         """
-        manifest = self.read_manifest()
+        manifest = self.read_manifest(iso=iso)
         day_entry = manifest.setdefault(date_key, {})
         existing = day_entry.get(data_type, {})
         day_entry[data_type] = {
@@ -458,21 +490,22 @@ class DuckDBStore:
             "stored_at": datetime.utcnow().isoformat(timespec="seconds"),
         }
         try:
-            self._manifest_path.write_text(
+            self._manifest_path_for_iso(iso).write_text(
                 json.dumps(manifest, indent=2, sort_keys=True)
             )
         except Exception as e:
             logger.warning(f"Manifest mark_day_exhausted failed: {e}")
 
-    def _refresh_manifest_from_files(self) -> None:
+    def _refresh_manifest_from_files(self, iso: str = "spp") -> None:
         """
         Bootstrap the manifest by scanning existing Parquet files.
-        Called once on first instantiation when no manifest.json exists.
         """
         manifest: dict = {}
         now_str = datetime.utcnow().isoformat(timespec="seconds")
+        constraints_dir = self._constraints_dir_for_iso(iso)
+        lmp_dir = self._lmp_dir_for_iso(iso)
 
-        for f in sorted(self._constraints_dir.glob("constraints_*.parquet")):
+        for f in sorted(constraints_dir.glob("constraints_*.parquet")):
             parts = f.stem.rsplit("_", 1)
             if len(parts) != 2:
                 continue
@@ -490,7 +523,7 @@ class DuckDBStore:
             except Exception:
                 pass
 
-        for f in sorted(self._lmp_dir.glob("lmp_*.parquet")):
+        for f in sorted(lmp_dir.glob("lmp_*.parquet")):
             parts = f.stem.rsplit("_", 1)
             if len(parts) != 2:
                 continue
@@ -509,15 +542,15 @@ class DuckDBStore:
                 pass
 
         try:
-            self._manifest_path.write_text(
+            self._manifest_path_for_iso(iso).write_text(
                 json.dumps(manifest, indent=2, sort_keys=True)
             )
             logger.info(
-                f"Manifest bootstrapped from existing Parquet files "
+                f"Manifest for {iso.upper()} bootstrapped from existing Parquet files "
                 f"({len(manifest)} days tracked)."
             )
         except Exception as e:
-            logger.warning(f"Manifest bootstrap failed: {e}")
+            logger.warning(f"Manifest bootstrap failed for {iso.upper()}: {e}")
 
     # ------------------------------------------------------------------
     # Internals
@@ -561,7 +594,7 @@ class DuckDBStore:
 
         sql = f"""
             SELECT *
-            FROM read_parquet({files!r})
+            FROM read_parquet({files!r}, union_by_name=True)
             WHERE CAST(interval AS TIMESTAMP) >= '{start_ts}'
               AND CAST(interval AS TIMESTAMP) <= '{end_ts}'
             {extra_filters}

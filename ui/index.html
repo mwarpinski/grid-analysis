@@ -27,8 +27,14 @@
     <div class="brand-dot"></div>
     <span class="brand-name">QuantShop</span>
     <span class="brand-divider">|</span>
-    <span class="brand-product">SPP Congestion Monitor</span>
+    <span class="brand-product">Multi-ISO Congestion Monitor</span>
   </div>
+
+  <div class="iso-selector-wrap">
+    <button class="iso-selector-btn active" data-iso="spp">SPP</button>
+    <button class="iso-selector-btn" data-iso="miso">MISO</button>
+  </div>
+
   <div class="header-status">
     <div id="status-indicator" class="status-dot status-connecting" title="WebSocket status"></div>
     <span id="status-label" class="status-label">Connecting…</span>
@@ -76,11 +82,12 @@
                 <th class="sortable" data-col="constraint_name">Constraint <span class="sort-arrow">↕</span></th>
                 <th class="sortable" data-col="shadow_price">Shadow Price <span class="sort-arrow">↕</span></th>
                 <th class="sortable" data-col="pct_of_limit">Loading % <span class="sort-arrow">↕</span></th>
+                <th class="sortable" data-col="volatility_score">Volatility <span class="sort-arrow">↕</span></th>
                 <th>State</th>
               </tr>
             </thead>
             <tbody id="constraint-tbody">
-              <tr class="empty-row"><td colspan="4">Waiting for data…</td></tr>
+              <tr class="empty-row"><td colspan="5">Waiting for data…</td></tr>
             </tbody>
           </table>
         </div>
@@ -373,15 +380,15 @@
 </main>
 
 <!-- Scripts -->
-<script src="js/api.js"></script>
-<script src="js/grid_map.js"></script>
-<script src="js/constraints_table.js"></script>
-<script src="js/sf_panel.js"></script>
-<script src="js/flow_impact_calculator.js"></script>
-<script src="js/portfolio_panel.js"></script>
-<script src="js/replay_player.js"></script>
-<script src="js/forecast_panel.js"></script>
-<script src="js/app.js"></script>
+<script src="js/api.js?v=16"></script>
+<script src="js/grid_map.js?v=16"></script>
+<script src="js/constraints_table.js?v=16"></script>
+<script src="js/sf_panel.js?v=16"></script>
+<script src="js/flow_impact_calculator.js?v=16"></script>
+<script src="js/portfolio_panel.js?v=16"></script>
+<script src="js/replay_player.js?v=16"></script>
+<script src="js/forecast_panel.js?v=16"></script>
+<script src="js/app.js?v=16"></script>
 
 </body>
 </html>

@@ -220,15 +220,31 @@ async def get_status():
     """
     from src.storage.duckdb_store import store
 
+    spp_cache = cache.for_iso("spp")
+    miso_cache = cache.for_iso("miso")
+
     return {
-        "ready": cache.is_ready(),
-        "last_updated": str(cache.last_updated) if cache.last_updated else None,
-        "last_solved": str(cache.last_solved) if cache.last_solved else None,
-        "current_regime": sorted(list(cache.current_regime)),
-        "n_regime_constraints": len(cache.current_regime),
-        "n_solved_pairs": len(cache.solution._flat) if cache.solution else 0,
-        "history_constraint_rows": len(cache._constraints_history),
-        "history_lmp_rows": len(cache._lmp_history),
+        "ready": spp_cache.is_ready() or miso_cache.is_ready(),
+        "spp": {
+            "ready": spp_cache.is_ready(),
+            "last_updated": str(spp_cache.last_updated) if spp_cache.last_updated else None,
+            "last_solved": str(spp_cache.last_solved) if spp_cache.last_solved else None,
+            "current_regime": sorted(list(spp_cache.current_regime)),
+            "n_regime_constraints": len(spp_cache.current_regime),
+            "n_solved_pairs": len(spp_cache.solution._flat) if spp_cache.solution else 0,
+            "history_constraint_rows": len(spp_cache._constraints_history),
+            "history_lmp_rows": len(spp_cache._lmp_history),
+        },
+        "miso": {
+            "ready": miso_cache.is_ready(),
+            "last_updated": str(miso_cache.last_updated) if miso_cache.last_updated else None,
+            "last_solved": str(miso_cache.last_solved) if miso_cache.last_solved else None,
+            "current_regime": sorted(list(miso_cache.current_regime)),
+            "n_regime_constraints": len(miso_cache.current_regime),
+            "n_solved_pairs": len(miso_cache.solution._flat) if miso_cache.solution else 0,
+            "history_constraint_rows": len(miso_cache._constraints_history),
+            "history_lmp_rows": len(miso_cache._lmp_history),
+        },
         "storage": store.storage_stats(),
     }
 

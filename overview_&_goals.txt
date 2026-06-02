@@ -1,0 +1,132 @@
+In short I want to achieve 3 things with this tool:
+
+
+Map constraints published by grid system operators (aka ISOs) to their location on a detailed map of the transmission grid published by the EIA
+Standardize the names of constraints published by the ISOs to a single physical piece of equipment on the grid. The formats of these published names can vary, so this step is necessary to compare occurrences across time periods and between the Day Ahead and Real Time markets
+Calculate the "Shift Factor" of each constraint to each price node in the market. The shift factor represents the sensitivity of the price of power at each node when the constraint is active. 
+
+
+I’d like to prototype this in a single ISO (SPP). You can find all of their market data here
+
+
+I need help on #3.
+
+
+Power markets assign prices to each node in a directed graph that makes up the power grid. The edges of this directed graph are transmission lines that all have limits on the amount of electricity flow they can handle. The prices on the nodes are called LMPs or Locational Marginal Pricing, because they represent the cost of supplying one more megawatt into the grid at a specific location. LMPs have 3 different components:
+
+
+Energy: the actual cost of energy produced. This component should be about the same across every price node
+Congestion: the modeled premium/discount at a specific location to encourage/discourage supply and demand at this location on the grid - This is what we care about
+Loss: the energy loss that occurs in transmission to get energy to this location (somewhat negligible)
+
+
+The price is determined by auctions in 2 different markets: the Day Ahead (DA) and Real Time (RT) markets. The Day Ahead market has generators (supply) and load entities (demand) make bids for all 24 hr segments of the day to create the cost of energy at each price node. The real time market has the same auction mechanism but split into 5 minute segments. I’m massively oversimplifying/glossing over this, but I mention the 2 markets because the way that people make money in this market is by buying energy in the DA market and selling in the RT market when the RT price ends up being higher (or vice versa).
+
+
+Since the Congestion component is what drives price changes, this is the main focus of financial traders before making trades. They’ll want to identify nodes on the grid that are over- or under-modeling congestion in the DA market so they can buy or sell energy at specific locations.
+
+
+Now back to my 3 goals. This tool is going to help traders visualize and analyze where congestion might be under or over modeled by the ISO. We’ll do this by
+
+
+Providing a map of transmission and linking constraints to the map so traders can visualize the system and have a real world topology of the directed graph that makes up the grid
+The EIA provides a pretty detailed map of transmission
+The challenge is tying constraints supplied by the ISO to the map. I’ve got a good idea of how to do this in a couple of ISOs to get us started.
+It’s worth noting that this step is really a “nice to have”, and the next 2 steps can be done independently
+Standardize the names of constraints between markets and over time periods
+This is the thing that my former employer (Yes Energy) and their competitor Enverus had entire teams of 8+ people to accomplish. With LLMs this should be automatable
+Once we have a mapping of each constraint to the physical piece of equipment on the grid, we can create a tool that enables comparisons of scenarios where this constraint has bound in the past, and traders can see whether or not the ISO forecasted the congestion correctly and can make trades appropriately.
+
+
+#3 is the critical piece. The Shift Factor is the number that traders are actually going to be looking at in both #1 and #2, so if this number isn’t any good this tool is worthless.
+
+
+A constraint shift factor represents how much the flow on a constrained transmission element will change (in percentage) for a 1 MW change in generation/load at a specific pricing node. When multiplied by the constraint's shadow price, it determines that constraint's contribution to the node's Marginal Congestion Component (MCC) of LMP.
+
+
+ISOs publish the constraints along with their shadow price in both the DA and RT markets. They also publish the MCC for each time period. This makes calculating shift factors very simple when looking at a time period with only a single binding constraint. For example, download the two files linked in the top level bullets:
+
+
+Constraints for 11/01/2024
+look at interval 11/01/2024 02:55:00 and you’ll see just a single constraint binding
+LN HARBINE - BEATRICE is the constraint
+Shadow price is -802.703
+You can interpret this shadow price’s large negative number as saying: on net, there’s too much energy being injected into the grid right now and it’s causing this constraint to bind. On net prices must go down to reduce power production on the export side of this constraint, or load must increase on the export side to keep the system in balance.
+Also note that the MEC (energy component of LMP) is negative, meaning there’s probably a ton of low cost wind energy blowing late at night. This is not material to this shift factor calc, but might give more real world context.
+RT LMP prices for 11/01/2024 02:55:00
+Look at the MCC column to get the congestion component
+To calculate shift factor, it’s as simple as dividing MCC / Shadow Price
+Ex: Pnode SOUC has an MCC = 1.606
+Calculation: 1.606 / -802.703
+Shift factor at SOUC = -0.002
+You would do this same calculation for all nodes. Traders would care most about nodes that have super high or low shift factors for this constraint and would trade around those, for example:
+V236_DDR has the lowest shift factor of -0.216, meaning this node is probably closest to the constraint on the import side. This means the price goes way up to incentivize generators to produce power in this area.
+NPPDSTEELFLTUNSTEELFLTSWIND_RA has the highest shift factor of 0.489. This means prices are negative here, disincentivizing producers to produce and incentivizing consumers to consume in order to relieve the constraint on this power line.
+
+
+Here’s the problem: it is exceedingly rare to have a single binding constraint ISO-wide for a given time period. We need to figure out how to calculate shift factors during periods of multiple binding constraints. According to what I’ve researched, it’s a complex matrix algebra problem when you have multiple binding constraints and several different shadow prices being spread across the whole grid.
+
+
+Take a look at any other time period in the Real Time market and you’ll see multiple binding constraints. This problem is even more pronounced in the Day Ahead market where you get all constraints for a given hour rather than the 5 minute granularity.
+
+
+Day ahead LMPs
+Day ahead Binding Constraints
+Real time LMPs
+Real time Binding Constraints
+
+
+
+
+So here’s where I’ll leave it to you - what is the most accurate way to calculate constraint shift factors at each price node in a time period with multiple binding constraints?
+
+
+Scattered links & notes
+
+Competing products:
+https://www.enverus.com/solutions/energy-analytics/power-and-renewables/muse/
+Note their “Constraint decomposition”. Seems super cool, would love to know how they do this. I believe this is where powerflow modeling is a must have.
+
+Powerflow modeling
+
+I know nothing about this, but perhaps you could figure out how this applies and what inputs I might need to gather to make something like this work. Like I mentioned, this is how Enverus calculates shift factors and is definitely the gold standard..
+
+I’ve found a ton of very approachable open source libraries. 
+https://pypsa.readthedocs.io/en/v0.19.3/index.html
+https://github.com/rwl/PYPOWER
+https://github.com/SanPen/GridCal
+
+Powerflow modeling is how the ISOs calculate shift factors. When I ask Claude how ISOs calculate shift factors this is what I get in response:
+
+Shift factors (also called Power Transfer Distribution Factors or PTDFs) are calculated by ISOs to determine how power flows through the transmission system when generation or load changes at different locations. Here's an explanation of how they are typically calculated:
+
+Definition:
+A shift factor represents the percentage of power that will flow on a specific transmission line when 1 MW is injected at a specific node and withdrawn at a reference bus
+Values range from -1 to 1 (or -100% to 100%)
+Negative values indicate power flows in the opposite direction of the defined positive flow
+Calculation Method:
+Uses DC power flow analysis (linearized approximation of AC power flow)
+The basic formula is: Shift Factor = Change in Line Flow / Change in Transaction
+
+Key Components:
+Network topology (transmission line connections)
+Line impedances
+Location of injection/withdrawal points
+Reference bus location
+
+Process:
+a) Create network model with:
+Bus admittance matrix
+Line parameters
+System topology
+b) Solve using:
+Matrix operations
+DC power flow equations
+Linear sensitivity analysis
+Uses:
+Security constrained economic dispatch
+Congestion management
+Financial transmission rights (FTR) markets
+Locational marginal pricing (LMP) calculations
+
+

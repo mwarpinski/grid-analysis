@@ -165,6 +165,76 @@ class SFCache:
 
 
 # ---------------------------------------------------------------------------
+# Multi-ISO Cache Registry
+# ---------------------------------------------------------------------------
+class MultiISOSFCache:
+    """
+    Wrapper registry that manages individual SFCache instances per ISO.
+    Forwards attributes/calls to the 'spp' cache by default for backward compatibility.
+    """
+    def __init__(self):
+        self._caches: Dict[str, SFCache] = {
+            "spp": SFCache(),
+            "miso": SFCache(),
+        }
+
+    def for_iso(self, iso: str) -> SFCache:
+        iso = iso.lower()
+        if iso not in self._caches:
+            self._caches[iso] = SFCache()
+        return self._caches[iso]
+
+    @property
+    def solution(self):
+        return self.for_iso("spp").solution
+
+    @solution.setter
+    def solution(self, val):
+        self.for_iso("spp").solution = val
+
+    @property
+    def latest_interval(self):
+        return self.for_iso("spp").latest_interval
+
+    @latest_interval.setter
+    def latest_interval(self, val):
+        self.for_iso("spp").latest_interval = val
+
+    @property
+    def last_updated(self):
+        return self.for_iso("spp").last_updated
+
+    @last_updated.setter
+    def last_updated(self, val):
+        self.for_iso("spp").last_updated = val
+
+    @property
+    def last_solved(self):
+        return self.for_iso("spp").last_solved
+
+    @last_solved.setter
+    def last_solved(self, val):
+        self.for_iso("spp").last_solved = val
+
+    @property
+    def current_regime(self):
+        return self.for_iso("spp").current_regime
+
+    @current_regime.setter
+    def current_regime(self, val):
+        self.for_iso("spp").current_regime = val
+
+    def update(self, interval: CachedInterval, constraints_df: pd.DataFrame, lmp_df: pd.DataFrame) -> bool:
+        return self.for_iso("spp").update(interval, constraints_df, lmp_df)
+
+    def get_shadow_prices(self) -> Dict[str, float]:
+        return self.for_iso("spp").get_shadow_prices()
+
+    def is_ready(self) -> bool:
+        return self.for_iso("spp").is_ready()
+
+
+# ---------------------------------------------------------------------------
 # Module-level singleton — import this everywhere
 # ---------------------------------------------------------------------------
-cache = SFCache()
+cache = MultiISOSFCache()

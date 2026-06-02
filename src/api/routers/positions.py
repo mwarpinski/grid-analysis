@@ -96,6 +96,10 @@ async def get_portfolio_risk(
         None, ge=0,
         description="Override shadow price ($/MWh). If omitted, uses live price from ingest cache.",
     ),
+    iso: str = Query(
+        "spp",
+        description="ISO namespace: spp or miso",
+    ),
 ) -> PortfolioRiskResponse:
     """
     **Portfolio P&L Risk Aggregation** — the core REQ-3 deliverable.
@@ -113,7 +117,8 @@ async def get_portfolio_risk(
 
         *Portfolio net: +13.5 MW on LN HARBINE — $13,500/hr at $1,000 shadow price.*
     """
-    if not cache.is_ready() or cache.solution is None:
+    iso_cache = cache.for_iso(iso)
+    if not iso_cache.is_ready() or iso_cache.solution is None:
         raise HTTPException(
             status_code=503,
             detail=(
@@ -133,12 +138,12 @@ async def get_portfolio_risk(
     # Resolve shadow price
     sp = shadow_price_override
     if sp is None:
-        sp = cache.get_shadow_prices().get(constraint)
+        sp = iso_cache.get_shadow_prices().get(constraint)
     if sp is None:
         raise HTTPException(
             status_code=404,
             detail=(
-                f"No shadow price available for constraint '{constraint}'. "
+                f"No shadow price available for constraint '{constraint}' in {iso.upper()}. "
                 "Either the constraint is not currently binding, or override via "
                 "?shadow_price_override=<value>."
             ),
@@ -149,7 +154,7 @@ async def get_portfolio_risk(
     total_net_mw = 0.0
 
     for pos in _position_store:
-        gsf = cache.solution.get(pos.node, constraint)
+        gsf = iso_cache.solution.get(pos.node, constraint)
         net_mw = (gsf * pos.mw_signed) if gsf is not None else None
         pnl = (net_mw * sp) if net_mw is not None else None
 

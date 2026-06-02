@@ -28,6 +28,9 @@ async def get_live_constraints(
         None, ge=0,
         description="Only return constraints with |shadow_price| >= this value"
     ),
+    iso: str = Query(
+        "spp", description="ISO namespace: spp or miso"
+    ),
 ) -> LiveConstraintsResponse:
     """
     Returns the most recent RTBM binding constraint snapshot.
@@ -35,7 +38,8 @@ async def get_live_constraints(
     Auto-refreshed every ~5 minutes by the ingest worker.
     Use the ``/ws/constraints`` WebSocket endpoint to receive push updates.
     """
-    if not cache.is_ready() or cache.latest_interval is None:
+    iso_cache = cache.for_iso(iso)
+    if not iso_cache.is_ready() or iso_cache.latest_interval is None:
         return LiveConstraintsResponse(
             as_of=datetime.utcnow(),
             interval=None,
@@ -43,7 +47,7 @@ async def get_live_constraints(
             constraints=[],
         )
 
-    interval = cache.latest_interval
+    interval = iso_cache.latest_interval
     rows = interval.constraints
 
     # Apply filters
@@ -75,12 +79,13 @@ async def get_live_constraints(
                 pct_of_limit=r.get("pct_of_limit"),
                 state=r.get("state"),
                 contingency_name=r.get("contingency_name"),
+                volatility_score=r.get("volatility_score"),
             ))
         except Exception:
             continue
 
     return LiveConstraintsResponse(
-        as_of=cache.last_updated or datetime.utcnow(),
+        as_of=iso_cache.last_updated or datetime.utcnow(),
         interval=interval.interval,
         n_binding=len(snapshots),
         constraints=snapshots,
@@ -93,6 +98,9 @@ async def get_near_limit_constraints(
         95.0, ge=50, le=100,
         description="Loading % threshold for near-limit alarm (default: 95%)"
     ),
+    iso: str = Query(
+        "spp", description="ISO namespace: spp or miso"
+    ),
 ) -> LiveConstraintsResponse:
     """
     Returns constraints running at or above the given loading % threshold.
@@ -104,4 +112,5 @@ async def get_near_limit_constraints(
         state=None,
         min_pct_of_limit=threshold_pct,
         min_shadow_price=None,
+        iso=iso,
     )

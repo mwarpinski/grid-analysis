@@ -41,10 +41,49 @@ document.addEventListener('DOMContentLoaded', () => {
     showSFHeatmap(name);     // zone heatmap overlay on map
   };
 
+  // ── ISO Selector ───────────────────────────────────────────────────
+  window.currentISO = 'spp';
+  document.querySelectorAll('.iso-selector-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const iso = btn.dataset.iso;
+      if (iso === window.currentISO) return;
+      window.currentISO = iso;
+      document.querySelectorAll('.iso-selector-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Clear current selected constraint and related UI elements
+      document.querySelectorAll('#constraint-tbody tr').forEach(r => r.classList.remove('selected'));
+      // Reset SF panel and map heatmap
+      const sfContent = document.getElementById('sf-content');
+      if (sfContent) {
+        sfContent.innerHTML = `
+          <div class="sf-placeholder">
+            <div class="sf-placeholder-icon">⚡</div>
+            <p>Click a constraint in the table<br/>or a line on the map to view<br/>nodal SF exposure.</p>
+          </div>`;
+      }
+      const chartWrap = document.getElementById('sf-chart-wrap');
+      if (chartWrap) chartWrap.classList.add('hidden');
+      if (typeof clearHeatmap === 'function') clearHeatmap();
+
+      // Trigger immediate REST fetch for constraints
+      try {
+        const data = await api.get(`/api/v1/constraints/live?iso=${window.currentISO}`);
+        updateConstraintsTable({ constraints: data.constraints, interval: data.interval });
+      } catch (err) {
+        console.error('Failed to switch ISO data:', err);
+      }
+    });
+  });
+
   // ── WebSocket ─────────────────────────────────────────────────────
   openConstraintsWS(
     (msg) => {
-    if (msg.type === 'constraint_update' || msg.type === 'initial_snapshot') {
+      // Discard messages from different ISO to prevent data leakage
+      if (msg.iso && msg.iso !== window.currentISO) {
+        return;
+      }
+      if (msg.type === 'constraint_update' || msg.type === 'initial_snapshot') {
         updateConstraintsTable(msg);
         if (msg.constraints) updateMapColors(msg.constraints);
         // Update interval label in header
@@ -66,7 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── Initial REST poll (fallback if WS hasn't fired yet) ────────────
   setTimeout(async () => {
     try {
-      const data = await api.get('/api/v1/constraints/live');
+      const data = await api.get('/api/v1/constraints/live?iso=' + window.currentISO);
       if (data.constraints && data.constraints.length > 0) {
         updateConstraintsTable({ constraints: data.constraints, interval: data.interval });
       }

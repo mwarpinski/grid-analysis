@@ -18,7 +18,7 @@ async function loadSFPanel(constraintName) {
     let data;
     try {
       data = await api.get(
-        `/api/v1/shift-factors/table?constraint=${encodeURIComponent(constraintName)}&limit=20`
+        `/api/v1/shift-factors/table?constraint=${encodeURIComponent(constraintName)}&limit=20&iso=${window.currentISO || 'spp'}`
       );
     } catch (e) {
       // 404 = constraint hasn't bound in the solve window yet — normal, not an error

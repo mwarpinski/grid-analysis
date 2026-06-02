@@ -80,7 +80,7 @@ async function submitPortfolio() {
 
   try {
     await api.post('/api/v1/positions', positions);
-    const data = await api.get(`/api/v1/portfolio/risk?constraint=${encodeURIComponent(constraint)}`);
+    const data = await api.get(`/api/v1/portfolio/risk?constraint=${encodeURIComponent(constraint)}&iso=${window.currentISO || 'spp'}`);
 
     const dir = data.total_net_mw_flow > 0.01 ? 'exacerbates'
                : data.total_net_mw_flow < -0.01 ? 'relieves' : 'neutral';

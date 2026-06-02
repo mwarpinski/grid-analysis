@@ -123,6 +123,7 @@ async def get_replay_snapshot(
                 pct_of_limit=row.get("pct_of_limit"),
                 state=row.get("state"),
                 contingency_name=row.get("contingency_name"),
+                volatility_score=row.get("volatility_score"),
             ))
         except Exception:
             continue
