@@ -577,6 +577,71 @@ async def backfill_spp(
     logger.info("SPP Backfill complete.")
 
 
+async def backfill_spp_da(
+    start: date_type,
+    end: date_type,
+    store: DuckDBStore,
+    delay: float = 2.0,
+    dry_run: bool = False,
+    force: bool = False,
+) -> None:
+    from src.scrapers.spp_da_constraints_scraper import DAConstraintsScraper
+
+    all_days = generate_days(start, end)
+    logger.info(f"SPP Day-Ahead Backfill range: {start} → {end}  ({len(all_days)} days)")
+
+    if dry_run:
+        manifest = store.read_manifest(iso="spp")
+        logger.info("DRY RUN — manifest status per day:")
+        for d in all_days:
+            key = d.isoformat()
+            status = manifest.get(key, {}).get("da_bc", {}).get("status", "missing")
+            flag = "✓" if status == "complete" else "✗"
+            logger.info(f"  {flag} {key}  DA_BC={status}")
+        return
+
+    if force:
+        days_to_process = all_days
+    else:
+        days_to_process = [
+            d for d in all_days
+            if store.manifest_status(d.isoformat(), "da_bc", iso="spp") != "complete"
+        ]
+
+    if not days_to_process:
+        logger.info("Nothing to backfill — all days complete per manifest.")
+        return
+
+    da_scraper = DAConstraintsScraper()
+    total_days = len(days_to_process)
+
+    for idx, day in enumerate(days_to_process, 1):
+        day_str = day.isoformat()
+        logger.info(f"[{idx}/{total_days}] Fetching SPP DA Constraints for {day} ...")
+
+        if idx > 1:
+            await asyncio.sleep(delay)
+
+        try:
+            target_dt = datetime(day.year, day.month, day.day)
+            df = await asyncio.to_thread(da_scraper.scrape_day, target_dt)
+            if not df.empty:
+                df = df.rename(columns={
+                    "interval": "interval",
+                    "constraint_name": "constraint_name",
+                    "shadow_price": "shadow_price",
+                })
+                if "interval" in df.columns:
+                    df["interval"] = pd.to_datetime(df["interval"])
+                
+                store.write_da_interval(df, iso="spp")
+                logger.info(f"  → DA_BC stored: {len(df)} rows")
+            else:
+                store.mark_day_exhausted(day_str, "da_bc", 0, 0, iso="spp")
+                logger.info(f"  → DA_BC: no binding constraints (marked complete)")
+        except Exception as e:
+            logger.error(f"  → DA_BC error fetching {day}: {e}")
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -593,6 +658,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--days", type=int, default=21,
         help="Number of days to backfill ending yesterday (default: 21).",
+    )
+    parser.add_argument(
+        "--market", type=str, default="rtbm", choices=["rtbm", "dam"],
+        help="Market to backfill: rtbm or dam (default: rtbm).",
     )
     parser.add_argument("--start",  type=str,   default=None, help="Start date YYYY-MM-DD.")
     parser.add_argument("--end",    type=str,   default=None, help="End date YYYY-MM-DD (inclusive, default: yesterday).")
@@ -625,23 +694,37 @@ def main() -> None:
     if args.status:
         # Print manifest and exit — no downloads
         manifest = store.read_manifest(iso=iso)
-        logger.info(f"Manifest status for {iso.upper()}:")
-        d = start
-        while d <= end:
-            key = d.isoformat()
-            bc  = manifest.get(key, {}).get("bc",  {}).get("status", "missing")
-            lmp = manifest.get(key, {}).get("lmp", {}).get("status", "missing")
-            bc_iv  = manifest.get(key, {}).get("bc",  {}).get("intervals", 0)
-            lmp_iv = manifest.get(key, {}).get("lmp", {}).get("intervals", 0)
-            flag = "✓" if bc == "complete" and lmp == "complete" else "✗"
-            logger.info(f"  {flag} {key}  BC={bc:<8} ({bc_iv:>3} iv)  LMP={lmp:<8} ({lmp_iv:>3} iv)")
-            d += timedelta(days=1)
+        if args.market == "dam":
+            logger.info(f"Manifest status for {iso.upper()} DAY-AHEAD:")
+            d = start
+            while d <= end:
+                key = d.isoformat()
+                da_bc = manifest.get(key, {}).get("da_bc", {}).get("status", "missing")
+                da_bc_iv = manifest.get(key, {}).get("da_bc", {}).get("intervals", 0)
+                flag = "✓" if da_bc == "complete" else "✗"
+                logger.info(f"  {flag} {key}  DA_BC={da_bc:<8} ({da_bc_iv:>3} iv)")
+                d += timedelta(days=1)
+        else:
+            logger.info(f"Manifest status for {iso.upper()} REAL-TIME:")
+            d = start
+            while d <= end:
+                key = d.isoformat()
+                bc  = manifest.get(key, {}).get("bc",  {}).get("status", "missing")
+                lmp = manifest.get(key, {}).get("lmp", {}).get("status", "missing")
+                bc_iv  = manifest.get(key, {}).get("bc",  {}).get("intervals", 0)
+                lmp_iv = manifest.get(key, {}).get("lmp", {}).get("intervals", 0)
+                flag = "✓" if bc == "complete" and lmp == "complete" else "✗"
+                logger.info(f"  {flag} {key}  BC={bc:<8} ({bc_iv:>3} iv)  LMP={lmp:<8} ({lmp_iv:>3} iv)")
+                d += timedelta(days=1)
         return
 
     delay = args.delay if args.delay is not None else (1.0 if iso == "miso" else 2.0)
 
-    if iso == "miso":
-        asyncio.run(backfill_miso(
+    if args.market == "dam":
+        if iso == "miso":
+            logger.error("Day-Ahead backfill is only supported for SPP currently.")
+            sys.exit(1)
+        asyncio.run(backfill_spp_da(
             start=start,
             end=end,
             store=store,
@@ -650,14 +733,24 @@ def main() -> None:
             force=args.force,
         ))
     else:
-        asyncio.run(backfill_spp(
-            start=start,
-            end=end,
-            store=store,
-            delay=delay,
-            dry_run=args.dry_run,
-            force=args.force,
-        ))
+        if iso == "miso":
+            asyncio.run(backfill_miso(
+                start=start,
+                end=end,
+                store=store,
+                delay=delay,
+                dry_run=args.dry_run,
+                force=args.force,
+            ))
+        else:
+            asyncio.run(backfill_spp(
+                start=start,
+                end=end,
+                store=store,
+                delay=delay,
+                dry_run=args.dry_run,
+                force=args.force,
+            ))
 
 
 if __name__ == "__main__":

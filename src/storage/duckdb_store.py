@@ -83,6 +83,7 @@ class DuckDBStore:
             self._constraints_dir_for_iso(iso)
             self._lmp_dir_for_iso(iso)
             self._sf_dir_for_iso(iso)
+            self._da_constraints_dir_for_iso(iso)
 
         # Track last pruning run — prune at most once per calendar day
         self._last_pruned: Optional[datetime] = None
@@ -114,6 +115,11 @@ class DuckDBStore:
 
     def _sf_dir_for_iso(self, iso: str) -> Path:
         d = self._iso_dir(iso) / "shift_factors"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _da_constraints_dir_for_iso(self, iso: str) -> Path:
+        d = self._iso_dir(iso) / "da_constraints"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -193,6 +199,32 @@ class DuckDBStore:
 
         # Once-per-day retention pruning
         self._maybe_prune()
+
+    def write_da_interval(
+        self,
+        constraints_df: pd.DataFrame,
+        iso: str = "spp",
+    ) -> None:
+        """Persist a single Day-Ahead constraint interval data to Parquet."""
+        if constraints_df.empty:
+            return
+
+        # Determine partition key
+        ts = None
+        if "interval" in constraints_df.columns:
+            ts = pd.to_datetime(constraints_df["interval"]).max()
+        if ts is None or pd.isnull(ts):
+            ts = datetime.utcnow()
+
+        date_str = ts.strftime("%Y%m%d")
+        date_key = ts.strftime("%Y-%m-%d")
+
+        self._append_parquet(
+            df=constraints_df,
+            directory=self._da_constraints_dir_for_iso(iso),
+            filename=f"da_constraints_{date_str}.parquet",
+        )
+        self._update_manifest(date_key, "da_bc", constraints_df, iso=iso)
 
     def write_shift_factors(
         self,
@@ -363,6 +395,26 @@ class DuckDBStore:
             ),
         )
 
+    def query_da_constraints(
+        self,
+        start: str | datetime,
+        end: str | datetime,
+        constraint_name: Optional[str] = None,
+        min_shadow_price: Optional[float] = None,
+        iso: str = "spp",
+    ) -> pd.DataFrame:
+        """Query Day-Ahead constraint history for a date range."""
+        parquet_pattern = str(self._da_constraints_dir_for_iso(iso) / "da_constraints_*.parquet")
+        return self._query(
+            parquet_pattern=parquet_pattern,
+            start=start,
+            end=end,
+            extra_filters=self._build_filters(
+                constraint_name=constraint_name,
+                min_shadow_price=min_shadow_price,
+            ),
+        )
+
     def query_lmp(
         self,
         start: str | datetime,
@@ -453,7 +505,9 @@ class DuckDBStore:
         intervals = df["interval"].nunique() if "interval" in df.columns else 0
         rows = len(df)
 
-        if iso.lower() == "miso":
+        if data_type == "da_bc":
+            threshold = 24
+        elif iso.lower() == "miso":
             threshold = 24 if data_type == "lmp" else 240
         else:
             threshold = LMP_COMPLETE_THRESHOLD if data_type == "lmp" else 280
@@ -539,6 +593,26 @@ class DuckDBStore:
                 key = d.isoformat()
                 thresh = 24 if iso.lower() == "miso" else LMP_COMPLETE_THRESHOLD
                 manifest.setdefault(key, {})["lmp"] = {
+                    "status":    "complete" if n >= thresh else "partial",
+                    "intervals": n,
+                    "rows":      len(pd.read_parquet(f)),
+                    "stored_at": now_str,
+                }
+            except Exception:
+                pass
+
+        da_constraints_dir = self._da_constraints_dir_for_iso(iso)
+        for f in sorted(da_constraints_dir.glob("da_constraints_*.parquet")):
+            parts = f.stem.rsplit("_", 2)
+            if len(parts) != 3:
+                continue
+            try:
+                d = datetime.strptime(parts[2], "%Y%m%d").date()
+                df = pd.read_parquet(f, columns=["interval"])
+                n = df["interval"].nunique()
+                key = d.isoformat()
+                thresh = 24
+                manifest.setdefault(key, {})["da_bc"] = {
                     "status":    "complete" if n >= thresh else "partial",
                     "intervals": n,
                     "rows":      len(pd.read_parquet(f)),
