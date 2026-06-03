@@ -16,9 +16,14 @@ selenium = "^4.17.2"
 webdriver-manager = "^4.0.1"
 aiohttp = "^3.9.3"
 python-dotenv = "^1.0.1"
-pyarrow = "^15.0.0"
-jupyter = "^1.0.0"
+pyarrow = ">=17.0.0"
 scipy = "^1.15.1"
+rapidfuzz = "^3.6.0"
+fastapi = ">=0.110"
+uvicorn = {version = ">=0.27", extras = ["standard"]}
+websockets = ">=12.0"
+duckdb = ">=0.10"
+python-multipart = ">=0.0.9"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"

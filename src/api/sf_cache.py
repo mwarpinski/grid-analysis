@@ -1,0 +1,240 @@
+"""
+Shift Factor Cache — in-memory singleton.
+
+Holds the most recent ShiftFactorSolution and shadow price snapshot so
+every API request gets sub-millisecond SF lookups without re-running
+the regression.
+
+The cache is updated by the ingest worker (src/api/ingest_worker.py)
+after each SPP RTBM poll cycle. The full regression is only re-run when
+a new constraint regime is detected (i.e., the set of binding constraints
+changes). Within a stable regime, only shadow prices are refreshed.
+
+Thread / async safety
+---------------------
+FastAPI runs in an asyncio event loop. The ingest worker runs as a
+background asyncio Task. All writes to the cache happen from that single
+task — no concurrent writes. Reads from route handlers are read-only.
+No lock is needed because Python's GIL protects individual attribute
+assignments, and we never mutate shared mutable objects in-place.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, FrozenSet, List, Optional
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CachedInterval:
+    """One RTBM scrape result, normalized and ready to serve."""
+    interval: datetime
+    constraints: List[dict]              # list of ConstraintSnapshot-compatible dicts
+    shadow_prices: Dict[str, float]      # {constraint_name: shadow_price}
+    lmp_df: pd.DataFrame                 # settlement_location, mcc
+    regime_key: FrozenSet[str]           # frozenset of binding constraint names
+
+
+@dataclass
+class SFCache:
+    """
+    Singleton in-memory store for the current shift factor solution
+    and latest market state.
+
+    Access via the module-level ``cache`` instance.
+    """
+
+    # The most recently solved ShiftFactorSolution (or None before first solve)
+    solution: Optional[object] = None       # ShiftFactorSolution
+
+    # Latest interval data from the ingest worker
+    latest_interval: Optional[CachedInterval] = None
+
+    # Timestamp of the last successful ingest
+    last_updated: Optional[datetime] = None
+
+    # Timestamp of the last SF solve (only changes when regime changes)
+    last_solved: Optional[datetime] = None
+
+    # Most recent regime key (frozenset of binding constraint names)
+    current_regime: FrozenSet[str] = field(default_factory=frozenset)
+
+    # Full constraints_df used for the current solve (grows with new intervals)
+    _constraints_history: pd.DataFrame = field(default_factory=pd.DataFrame)
+    _lmp_history: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+    # Maximum history retained for regression (rolling window)
+    max_history_intervals: int = 2016   # 2016 × 5 min = 7 days
+
+    def update(
+        self,
+        interval: CachedInterval,
+        constraints_df: pd.DataFrame,
+        lmp_df: pd.DataFrame,
+    ) -> bool:
+        """
+        Ingest a new interval. Re-runs the SF solver only when the
+        binding constraint regime changes.
+
+        Returns True if a new solve was triggered.
+        """
+        from src.analysis.multi_constraint_sf import calculate_shift_factors
+
+        self.latest_interval = interval
+        self.last_updated = datetime.now()
+
+        # Append to rolling history
+        self._constraints_history = self._append_and_trim(
+            self._constraints_history, constraints_df
+        )
+        self._lmp_history = self._append_and_trim(
+            self._lmp_history, lmp_df
+        )
+
+        # Check if the regime changed (new set of binding constraints)
+        new_regime = interval.regime_key
+        regime_changed = new_regime != self.current_regime
+
+        if regime_changed or self.solution is None:
+            logger.info(
+                f"Regime changed: {self.current_regime} → {new_regime}. "
+                "Re-running shift factor solver."
+            )
+            self.current_regime = new_regime
+            try:
+                self.solution = calculate_shift_factors(
+                    constraints_df=self._constraints_history,
+                    lmp_df=self._lmp_history,
+                    min_intervals=10,
+                )
+                self.last_solved = datetime.now()
+                logger.info(
+                    f"SF solve complete. "
+                    f"History: {len(self._constraints_history)} constraint-rows, "
+                    f"{len(self._lmp_history)} LMP rows."
+                )
+                return True
+            except Exception as e:
+                logger.error(f"SF solve failed: {e}", exc_info=True)
+
+        return False
+
+    def get_shadow_prices(self) -> Dict[str, float]:
+        """Return the most recent shadow price snapshot."""
+        if self.latest_interval is None:
+            return {}
+        return self.latest_interval.shadow_prices
+
+    def is_ready(self) -> bool:
+        """True once at least one successful solve has completed."""
+        return self.solution is not None and self.last_updated is not None
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _append_and_trim(
+        self,
+        existing: pd.DataFrame,
+        new: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Append new rows and trim to rolling window."""
+        if existing.empty:
+            return new.copy()
+        combined = pd.concat([existing, new], ignore_index=True)
+
+        if "interval" in combined.columns:
+            combined = combined.drop_duplicates(
+                subset=[c for c in ["interval", "constraint_name", "settlement_location"]
+                        if c in combined.columns],
+                keep="last",
+            )
+            # Keep only the most recent max_history_intervals unique intervals
+            unique_intervals = sorted(combined["interval"].unique())
+            if len(unique_intervals) > self.max_history_intervals:
+                cutoff = unique_intervals[-self.max_history_intervals]
+                combined = combined[combined["interval"] >= cutoff]
+
+        return combined.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Multi-ISO Cache Registry
+# ---------------------------------------------------------------------------
+class MultiISOSFCache:
+    """
+    Wrapper registry that manages individual SFCache instances per ISO.
+    Forwards attributes/calls to the 'spp' cache by default for backward compatibility.
+    """
+    def __init__(self):
+        self._caches: Dict[str, SFCache] = {
+            "spp": SFCache(),
+            "miso": SFCache(),
+        }
+
+    def for_iso(self, iso: str) -> SFCache:
+        iso = iso.lower()
+        if iso not in self._caches:
+            self._caches[iso] = SFCache()
+        return self._caches[iso]
+
+    @property
+    def solution(self):
+        return self.for_iso("spp").solution
+
+    @solution.setter
+    def solution(self, val):
+        self.for_iso("spp").solution = val
+
+    @property
+    def latest_interval(self):
+        return self.for_iso("spp").latest_interval
+
+    @latest_interval.setter
+    def latest_interval(self, val):
+        self.for_iso("spp").latest_interval = val
+
+    @property
+    def last_updated(self):
+        return self.for_iso("spp").last_updated
+
+    @last_updated.setter
+    def last_updated(self, val):
+        self.for_iso("spp").last_updated = val
+
+    @property
+    def last_solved(self):
+        return self.for_iso("spp").last_solved
+
+    @last_solved.setter
+    def last_solved(self, val):
+        self.for_iso("spp").last_solved = val
+
+    @property
+    def current_regime(self):
+        return self.for_iso("spp").current_regime
+
+    @current_regime.setter
+    def current_regime(self, val):
+        self.for_iso("spp").current_regime = val
+
+    def update(self, interval: CachedInterval, constraints_df: pd.DataFrame, lmp_df: pd.DataFrame) -> bool:
+        return self.for_iso("spp").update(interval, constraints_df, lmp_df)
+
+    def get_shadow_prices(self) -> Dict[str, float]:
+        return self.for_iso("spp").get_shadow_prices()
+
+    def is_ready(self) -> bool:
+        return self.for_iso("spp").is_ready()
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton — import this everywhere
+# ---------------------------------------------------------------------------
+cache = MultiISOSFCache()
