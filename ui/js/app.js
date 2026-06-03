@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initFlowImpactCalculator();
   initPortfolioPanel();
   initReplayPlayer();
+  initDARTPanel();
 
   // ── Panel navigation ───────────────────────────────────────────────
   document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -29,6 +30,10 @@ document.addEventListener('DOMContentLoaded', () => {
       // Load forecast models when switching to forecast panel
       if (target === 'forecast' && typeof window.forecastPanelActivate === 'function') {
         window.forecastPanelActivate();
+      }
+      // Load DART spreads when switching to DART panel
+      if (target === 'dart' && typeof window.dartPanelActivate === 'function') {
+        window.dartPanelActivate();
       }
     });
   });
@@ -72,6 +77,12 @@ document.addEventListener('DOMContentLoaded', () => {
         updateConstraintsTable({ constraints: data.constraints, interval: data.interval });
       } catch (err) {
         console.error('Failed to switch ISO data:', err);
+      }
+
+      // Trigger DART update if panel is active
+      const dartPanel = document.getElementById('panel-dart');
+      if (dartPanel && dartPanel.classList.contains('active') && typeof window.dartPanelActivate === 'function') {
+        window.dartPanelActivate();
       }
     });
   });

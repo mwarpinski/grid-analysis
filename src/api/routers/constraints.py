@@ -114,3 +114,26 @@ async def get_near_limit_constraints(
         min_shadow_price=None,
         iso=iso,
     )
+
+
+@router.get("/dart-spreads")
+async def get_dart_spreads(
+    days: int = Query(30, ge=1, le=90, description="Rolling historical window in days"),
+    iso: str = Query("spp", description="ISO footprint: spp or miso"),
+):
+    """
+    Returns rolling N-day historical Day-Ahead vs. Real-Time (DART) shadow price spreads.
+    Identifies constraints consistently underpriced in the Day-Ahead Market.
+    """
+    from src.analysis.dart_engine import calculate_dart_spreads
+    try:
+        spreads = calculate_dart_spreads(iso=iso, days=days)
+        return {
+            "iso": iso,
+            "days": days,
+            "as_of": datetime.utcnow().isoformat(),
+            "count": len(spreads),
+            "spreads": spreads,
+        }
+    except Exception as e:
+        return {"error": str(e), "spreads": []}

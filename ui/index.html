@@ -46,6 +46,7 @@
     <button id="nav-forecast" class="nav-btn"        data-panel="forecast">Forecast</button>
     <button id="nav-portfolio" class="nav-btn"       data-panel="portfolio">Portfolio</button>
     <button id="nav-replay"   class="nav-btn"        data-panel="replay">Replay</button>
+    <button id="nav-dart"     class="nav-btn"        data-panel="dart">DART Spread</button>
   </nav>
 </header>
 
@@ -377,6 +378,100 @@
     </div>
   </div><!-- #panel-replay -->
 
+  <!-- ============================================================
+       PANEL: DART SPREAD ENGINE
+  ============================================================ -->
+  <div id="panel-dart" class="app-panel">
+    <div class="three-col-layout">
+
+      <!-- Left / Stats & Selector -->
+      <aside class="col-left glass-panel" id="col-dart-controls">
+        <div class="panel-header">
+          <h2 class="panel-title">DART Arbitrage Settings</h2>
+          <p class="panel-subtitle-text">Identify price discrepancies between DA and RT markets.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="dart-days">Lookback Window</label>
+          <select id="dart-days" class="form-select">
+            <option value="7">Last 7 Days</option>
+            <option value="15">Last 15 Days</option>
+            <option value="30" selected>Last 30 Days</option>
+            <option value="45">Last 45 Days</option>
+            <option value="90">Last 90 Days</option>
+          </select>
+        </div>
+
+        <div class="dart-stats-container">
+          <div class="dart-stat-card">
+            <span class="dart-stat-val" id="dart-stat-total">0</span>
+            <span class="dart-stat-label">Total Constraints</span>
+          </div>
+          <div class="dart-stat-card highlight">
+            <span class="dart-stat-val text-red" id="dart-stat-underpriced">0</span>
+            <span class="dart-stat-label">DAM Underpriced</span>
+          </div>
+          <div class="dart-stat-card">
+            <span class="dart-stat-val text-amber" id="dart-stat-max-spread">$0.00</span>
+            <span class="dart-stat-label">Max Negative DART Spread</span>
+          </div>
+        </div>
+
+        <div class="dart-info-card">
+          <h4>What is DART Arbitrage?</h4>
+          <p>
+            An arbitrage opportunity exists when <strong>DAM Shadow Price</strong> is higher (less negative) than <strong>RTBM Shadow Price</strong>, meaning the Day-Ahead market consistently underprices congestion. Traders can buy transmission congestion rights or virtual bid to profit from this spread.
+          </p>
+        </div>
+      </aside>
+
+      <!-- Center: Table of DART Spreads -->
+      <section class="col-center glass-panel" id="col-dart-table">
+        <div class="panel-header">
+          <h2 class="panel-title">DART Spread Matrix</h2>
+          <span class="badge badge-blue" id="dart-status-badge">Loaded</span>
+        </div>
+
+        <div id="dart-table-wrap" class="table-scroll">
+          <table id="dart-table" class="data-table">
+            <thead>
+              <tr>
+                <th>Constraint Name</th>
+                <th>Avg RTBM ($)</th>
+                <th>Avg DAM ($)</th>
+                <th>DART Spread ($)</th>
+                <th>RT Hours</th>
+                <th>DA Hours</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="dart-tbody">
+              <tr class="empty-row"><td colspan="7">Loading DART spreads...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Right: Visualizer / Charts -->
+      <aside class="col-right glass-panel" id="col-dart-charts">
+        <div class="panel-header">
+          <h2 class="panel-title">Top Congested Constraints</h2>
+          <p class="panel-subtitle-text">Hourly average shadow prices (RTBM vs. DAM)</p>
+        </div>
+
+        <div id="dart-chart-placeholder" class="sf-placeholder">
+          <div class="sf-placeholder-icon">📊</div>
+          <p>Chart loading…</p>
+        </div>
+
+        <div id="dart-chart-wrap" class="chart-wrap hidden" style="height: 350px;">
+          <canvas id="dart-chart"></canvas>
+        </div>
+      </aside>
+
+    </div>
+  </div><!-- #panel-dart -->
+
 </main>
 
 <!-- Scripts -->
@@ -388,6 +483,7 @@
 <script src="js/portfolio_panel.js?v=16"></script>
 <script src="js/replay_player.js?v=16"></script>
 <script src="js/forecast_panel.js?v=16"></script>
+<script src="js/dart_panel.js?v=16"></script>
 <script src="js/app.js?v=16"></script>
 
 </body>

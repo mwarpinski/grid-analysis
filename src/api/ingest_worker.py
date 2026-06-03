@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Set
+
+_last_da_scraped_date = None
 
 import pandas as pd
 
@@ -122,6 +124,34 @@ async def ingest_once(iso: str = "spp") -> bool:
         except Exception as e:
             logger.warning(f"[{iso.upper()}] RT LMP scrape failed: {e}")
             lmp_df = pd.DataFrame()
+
+        # ── Step 2.5: Scrape/Verify latest DAM constraints (once daily) ──────
+        global _last_da_scraped_date
+        today_date = now.date()
+        if _last_da_scraped_date != today_date:
+            try:
+                from src.scrapers.spp_da_constraints_scraper import DAConstraintsScraper
+                from src.storage.duckdb_store import store
+                da_scraper = DAConstraintsScraper()
+                logger.info(f"[{iso.upper()}] Running daily Day-Ahead constraints check/scrape...")
+                # Fetch today's and yesterday's to handle timezone/publication overlaps
+                for offset_days in (1, 0):
+                    target_date = today_date - timedelta(days=offset_days)
+                    target_dt = datetime(target_date.year, target_date.month, target_date.day)
+                    da_df = await asyncio.to_thread(da_scraper.scrape_day, target_dt)
+                    if not da_df.empty:
+                        da_df = da_df.rename(columns={
+                            "interval": "interval",
+                            "constraint_name": "constraint_name",
+                            "shadow_price": "shadow_price",
+                        })
+                        if "interval" in da_df.columns:
+                            da_df["interval"] = pd.to_datetime(da_df["interval"])
+                        await asyncio.to_thread(store.write_da_interval, da_df, iso=iso)
+                        logger.info(f"[{iso.upper()}] Successfully ingested Day-Ahead constraints for {target_date} ({len(da_df)} rows)")
+                _last_da_scraped_date = today_date
+            except Exception as e:
+                logger.warning(f"[{iso.upper()}] Daily Day-Ahead constraint check/scrape failed: {e}")
     elif iso == "miso":
         from src.scrapers.miso_adapter import MISOAdapter
         

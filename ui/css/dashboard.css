@@ -521,3 +521,55 @@ html, body {
 .hidden {
   display: none !important;
 }
+
+/* DART Spread Panel Styling */
+.dart-stats-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+.dart-stat-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+}
+.dart-stat-card.highlight {
+  border-color: rgba(239, 68, 68, 0.15);
+  background: rgba(239, 68, 68, 0.03);
+}
+.dart-stat-val {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-family: var(--mono);
+}
+.dart-stat-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.text-red { color: var(--red); }
+.text-amber { color: var(--amber); }
+
+.dart-info-card {
+  margin: 1rem;
+  padding: 1rem;
+  background: rgba(59, 130, 246, 0.03);
+  border: 1px solid rgba(59, 130, 246, 0.1);
+  border-radius: 8px;
+}
+.dart-info-card h4 {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+.dart-info-card p {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}

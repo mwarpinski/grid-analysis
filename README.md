@@ -346,5 +346,12 @@ All core architecture phases are complete:
 | **13** | **Shadow price forecasting** — Gradient Boosting models with AutoML-based configuration selection (loss and target transform tuning) and persistent fallback logic | ✅ Complete |
 | **14** | **LLM constraint resolver** — Automated resolution of ambiguous or truncated constraint names using structured LLM classification | ✅ Complete |
 | **15** | **MCP server exposure** — TypeScript/Node-based MCP server exposing key analytical tools (shift factor solver, bilateral flow impact, portfolio risk) to MCP clients | ✅ Complete |
+| **16** | **Multi-ISO Expansion** — Extended framework for multi-market trading:<br/>• **SPP**: Real-time & day-ahead constraints, LMPs, shift factors, and ML forecasters.<br/>• **MISO**: Real-time constraints, LMPs, and footprint cache isolation (day-ahead/forecasting pending). | ✅ Complete |
+| **17** | **DART Congestion Arbitrage Engine** — Implemented Day-Ahead constraint ingestion, manifest tracking, rolling 30-day DART spreads ($RTBM - DAM$), background scraping, and a dedicated UI settings & matrix dashboard panel with interactive Chart.js visualization | ✅ Complete |
 
-The platform is fully operational, retrained, and verified.
+### Future Roadmap
+
+1. **MISO Day-Ahead Scraper Integration**: Build adapter for MISO Day-Ahead binding constraints files to feed into `DuckDBStore` and complete MISO DART analytics.
+2. **Forecast-Driven Arbitrage Quality**: Cross-reference calculated DART spreads with predicted future shadow prices from the Gradient Boosted ML forecasters to refine the arbitrage opportunity signals.
+3. **Grid Outage Topology Modifiers**: Integrate physical grid changes (such as active CROW outages and flowgate modifiers) directly into the statistical shift factor solver.
+
