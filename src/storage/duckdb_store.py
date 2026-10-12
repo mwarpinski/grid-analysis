@@ -170,33 +170,26 @@ class DuckDBStore:
         if not has_constraints and not has_lmp:
             return
 
-        # Determine partition key
-        ts = None
-        if has_constraints and "interval" in constraints_df.columns:
-            ts = pd.to_datetime(constraints_df["interval"]).max()
-        elif has_lmp and "interval" in lmp_df.columns:
-            ts = pd.to_datetime(lmp_df["interval"]).max()
-        if ts is None or pd.isnull(ts):
-            ts = datetime.utcnow()
-
-        date_str = ts.strftime("%Y%m%d")
-        date_key = ts.strftime("%Y-%m-%d")
-
+        # Each row goes to the file for its own market day. (Keying the whole frame on its
+        # latest timestamp put a day-long SPP file, whose last interval is labelled 00:00 of
+        # the NEXT day, entirely in the next day's file.)
         if has_constraints:
-            self._append_parquet(
-                df=constraints_df,
-                directory=self._constraints_dir_for_iso(iso),
-                filename=f"constraints_{date_str}.parquet",
-            )
-            self._update_manifest(date_key, "bc", constraints_df, iso=iso)
+            for date_str, date_key, part in self._split_by_day(constraints_df, iso):
+                self._append_parquet(
+                    df=part,
+                    directory=self._constraints_dir_for_iso(iso),
+                    filename=f"constraints_{date_str}.parquet",
+                )
+                self._update_manifest(date_key, "bc", part, iso=iso)
 
         if has_lmp:
-            self._append_parquet(
-                df=lmp_df,
-                directory=self._lmp_dir_for_iso(iso),
-                filename=f"lmp_{date_str}.parquet",
-            )
-            self._update_manifest(date_key, "lmp", lmp_df, iso=iso)
+            for date_str, date_key, part in self._split_by_day(lmp_df, iso):
+                self._append_parquet(
+                    df=part,
+                    directory=self._lmp_dir_for_iso(iso),
+                    filename=f"lmp_{date_str}.parquet",
+                )
+                self._update_manifest(date_key, "lmp", part, iso=iso)
 
         # Once-per-day retention pruning
         self._maybe_prune()
@@ -210,22 +203,13 @@ class DuckDBStore:
         if constraints_df.empty:
             return
 
-        # Determine partition key
-        ts = None
-        if "interval" in constraints_df.columns:
-            ts = pd.to_datetime(constraints_df["interval"]).max()
-        if ts is None or pd.isnull(ts):
-            ts = datetime.utcnow()
-
-        date_str = ts.strftime("%Y%m%d")
-        date_key = ts.strftime("%Y-%m-%d")
-
-        self._append_parquet(
-            df=constraints_df,
-            directory=self._da_constraints_dir_for_iso(iso),
-            filename=f"da_constraints_{date_str}.parquet",
-        )
-        self._update_manifest(date_key, "da_bc", constraints_df, iso=iso)
+        for date_str, date_key, part in self._split_by_day(constraints_df, iso):
+            self._append_parquet(
+                df=part,
+                directory=self._da_constraints_dir_for_iso(iso),
+                filename=f"da_constraints_{date_str}.parquet",
+            )
+            self._update_manifest(date_key, "da_bc", part, iso=iso)
 
     def write_shift_factors(
         self,
@@ -659,6 +643,26 @@ class DuckDBStore:
                 self._write_parquet_atomic(df, path)
         except Exception as e:
             logger.error(f"Parquet write failed ({path}): {e}")
+
+    @staticmethod
+    def _split_by_day(df: pd.DataFrame, iso: str = "spp"):
+        """
+        Yield ``(YYYYMMDD, YYYY-MM-DD, sub_frame)`` for each market day present in ``df``.
+
+        SPP labels each interval by its END time (the first interval of a day is 00:05
+        and the last is 00:00 of the next calendar day), so for SPP the day is taken
+        from the interval's start (label minus one minute).  Frames with no usable
+        ``interval`` column go to today's file.
+        """
+        if "interval" in df.columns:
+            ts = pd.to_datetime(df["interval"], errors="coerce")
+            if iso.lower() == "spp":
+                ts = ts - pd.Timedelta(minutes=1)
+            days = ts.dt.normalize().fillna(pd.Timestamp(datetime.utcnow().date()))
+        else:
+            days = pd.Series(pd.Timestamp(datetime.utcnow().date()), index=df.index)
+        for day, part in df.groupby(days, sort=True):
+            yield day.strftime("%Y%m%d"), day.strftime("%Y-%m-%d"), part
 
     @staticmethod
     def _write_parquet_atomic(df: pd.DataFrame, path: Path) -> None:
