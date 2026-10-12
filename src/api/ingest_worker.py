@@ -84,8 +84,6 @@ async def _scrape_rt_constraints(bc_scraper, now: datetime) -> "pd.DataFrame":
     The daily rollup file only exists after midnight, so we always use
     the per-interval endpoint during the live trading day.
     """
-    from datetime import timedelta
-
     rounded = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
 
     for offset in range(7):   # 0 … 30 minutes back
@@ -252,7 +250,6 @@ async def ingest_once(iso: str = "spp") -> bool:
     vol_scores = {}
     try:
         from src.storage.duckdb_store import store
-        from datetime import timedelta
         two_hours_ago = latest_interval_ts - timedelta(hours=2)
         history_df = store.query_constraints(start=two_hours_ago, end=latest_interval_ts, iso=iso)
         

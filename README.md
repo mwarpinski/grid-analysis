@@ -109,6 +109,7 @@ The dashboard has four panels accessible via the top navigation:
 ### 5. Run the test suite
 
 ```bash
+pip install pytest httpx      # not needed with `poetry install`, which includes the dev group
 pytest tests/ -v
 ```
 

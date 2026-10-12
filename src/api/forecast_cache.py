@@ -225,8 +225,10 @@ def _train_one(constraint_name: str, lookback_days: int = 21) -> FitResult:
     history = _load_constraint_history(constraint_name, lookback_days=lookback_days)
 
     # Merge in live in-memory history from the SF cache
-    if not sf_cache._constraints_history.empty:
-        live = sf_cache._constraints_history.copy()
+    # sf_cache is the multi-ISO wrapper; the forecaster models are trained on SPP data.
+    spp_history = sf_cache.for_iso("spp")._constraints_history
+    if not spp_history.empty:
+        live = spp_history.copy()
         live.columns = [c.lower() for c in live.columns]
         if "constraint_name" in live.columns and "shadow_price" in live.columns:
             live = live[live["constraint_name"] == constraint_name][
