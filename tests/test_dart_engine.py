@@ -21,11 +21,13 @@ def test_calculate_dart_spreads_empty():
 def test_calculate_dart_spreads_calculation():
     """Test DART spreads hourly alignment, averaging, and underpricing logic."""
     # Create sample RTBM constraints
+    # SPP labels intervals by their END time: 00:05..01:00 make up hour-ending 01
+    # (matching DA label 01:00); 01:05..02:00 make up hour-ending 02.
     rt_data = [
-        {"interval": "2026-05-15 01:05:00", "constraint_name": "LINE_A", "shadow_price": -100.0},
-        {"interval": "2026-05-15 01:10:00", "constraint_name": "LINE_A", "shadow_price": -200.0}, # Avg = -150.0 for Hour 1
-        {"interval": "2026-05-15 02:00:00", "constraint_name": "LINE_A", "shadow_price": -50.0},  # Avg = -50.0 for Hour 2
-        {"interval": "2026-05-15 01:05:00", "constraint_name": "LINE_B", "shadow_price": -10.0},  # RT avg = -10.0
+        {"interval": "2026-05-15 00:05:00", "constraint_name": "LINE_A", "shadow_price": -100.0},
+        {"interval": "2026-05-15 00:10:00", "constraint_name": "LINE_A", "shadow_price": -200.0}, # Avg = -150.0 for HE01
+        {"interval": "2026-05-15 01:55:00", "constraint_name": "LINE_A", "shadow_price": -50.0},  # Avg = -50.0 for HE02
+        {"interval": "2026-05-15 00:05:00", "constraint_name": "LINE_B", "shadow_price": -10.0},  # RT avg = -10.0
     ]
     rt_df = pd.DataFrame(rt_data)
     
@@ -76,6 +78,25 @@ def test_calculate_dart_spreads_calculation():
         assert line_b["mean_dart_spread"] == 30.0
         # abs(-10.0) > abs(-40.0) -> False
         assert line_b["underpriced_in_dam"] is False
+
+def test_rt_interval_ending_on_the_hour_belongs_to_that_hour_ending():
+    """The 01:00 interval is the LAST interval of HE01, so it must pair with DA label 01:00."""
+    rt_df = pd.DataFrame([
+        {"interval": "2026-05-15 01:00:00", "constraint_name": "LINE_A", "shadow_price": -80.0},
+        {"interval": "2026-05-15 01:05:00", "constraint_name": "LINE_A", "shadow_price": -999.0},  # HE02
+    ])
+    da_df = pd.DataFrame([
+        {"interval": "2026-05-15 01:00:00", "constraint_name": "LINE_A", "shadow_price": -50.0},
+    ])
+    with patch("src.analysis.dart_engine.store") as mock_store:
+        mock_store.query_constraints.return_value = rt_df
+        mock_store.query_da_constraints.return_value = da_df
+        line_a = calculate_dart_spreads(iso="spp", days=30)[0]
+
+    # HE01: RT -80 vs DA -50 (spread -30); HE02: RT -999 vs DA 0 (spread -999). Mean = -514.5
+    assert line_a["mean_dart_spread"] == pytest.approx((-30.0 + -999.0) / 2)
+    assert line_a["rtbm_binding_hours"] == 2
+
 
 def test_api_dart_spreads_route():
     """Test that the /api/v1/constraints/dart-spreads endpoint calls the engine and returns JSON."""

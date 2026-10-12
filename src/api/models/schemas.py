@@ -98,13 +98,17 @@ class MCCContribution(BaseModel):
     constraint: str
     shadow_price: float
     shift_factor: Optional[float]
-    contribution: float            # SF × SP (before negation)
+    contribution: float            # SF × SP (0 when no shift factor is available)
 
 
 class MCCResponse(BaseModel):
     node: str
-    mcc: float                     # -Σ(SF × SP)
+    mcc: float                     # Σ(SF × SP)
     n_constraints_used: int
+    # Share of the current Σ|shadow price| carried by constraints that HAVE shift
+    # factors. The estimate silently leaves out the rest, so a value well below 1.0
+    # means `mcc` is missing most of the congestion (e.g. a newly binding constraint).
+    shadow_price_coverage: Optional[float] = None
     shadow_prices_used: List[MCCContribution]
 
 

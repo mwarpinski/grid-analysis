@@ -304,8 +304,11 @@ class ForecastCache:
         except Exception as e:
             logger.debug(f"Could not initialize last_retrained from manifest: {e}")
 
-        # Retrain only stale/missing models
-        await self.retrain_all(skip_fresh=True)
+        # Retrain only stale/missing models — in the background, so the server
+        # starts serving immediately instead of waiting on every model fit.
+        self._startup_train_task = asyncio.create_task(
+            self.retrain_all(skip_fresh=True), name="forecast_startup_train"
+        )
 
         self._retrain_task = asyncio.create_task(
             self._retrain_loop(), name="forecast_retrain_loop"

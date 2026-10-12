@@ -112,7 +112,7 @@ class TestToDataframeWithExposure:
 
 class TestComputeMCC:
     def test_mcc_formula_single_constraint(self, single_solution):
-        """MCC_node = -(SF × SP). Verify against known SF."""
+        """MCC_node = +(SF × SP), the same convention the SFs are fit with."""
         solution, true_sfs = single_solution
         sp_val = 500.0
         sp = {"LN TEST - CONSTRAINT": sp_val}
@@ -121,13 +121,13 @@ class TestComputeMCC:
         mcc = solution.compute_mcc(node, sp)
         sf = solution.get(node, "LN TEST - CONSTRAINT")
 
-        expected_mcc = -(sf * sp_val)
+        expected_mcc = sf * sp_val
         assert abs(mcc - expected_mcc) < 1e-6, (
             f"compute_mcc={mcc:.4f}, expected {expected_mcc:.4f}"
         )
 
     def test_mcc_multi_constraint_is_sum(self, multi_solution):
-        """With two constraints, MCC = -(SF1×SP1 + SF2×SP2)."""
+        """With two constraints, MCC = SF1×SP1 + SF2×SP2."""
         solution, _ = multi_solution
         sp = {
             "LN ALPHA - BETA":   200.0,
@@ -138,8 +138,28 @@ class TestComputeMCC:
 
         sf1 = solution.get(node, "LN ALPHA - BETA")
         sf2 = solution.get(node, "LN GAMMA - DELTA")
-        expected = -(sf1 * 200.0 + sf2 * (-150.0))
+        expected = sf1 * 200.0 + sf2 * (-150.0)
         assert abs(mcc - expected) < 1e-6
+
+    def test_compute_mcc_reproduces_observed_mcc(self):
+        """
+        compute_mcc must predict the MCC the solver was fit on, with the same sign.
+        (It once returned the negation of the fit, which no isolated formula test caught.)
+        """
+        constraints_df, lmp_df, _ = make_single_constraint_data(
+            n_intervals=60, n_nodes=3, true_sf=0.25, noise_std=0.0, seed=3
+        )
+        solution = calculate_shift_factors(
+            constraints_df=constraints_df, lmp_df=lmp_df, min_intervals=5
+        )
+        iv = constraints_df["interval"].iloc[10]
+        sp = float(constraints_df.loc[constraints_df["interval"] == iv, "shadow_price"].iloc[0])
+        for node in ("NODE_00", "NODE_01", "NODE_02"):
+            observed = float(
+                lmp_df[(lmp_df["interval"] == iv) & (lmp_df["settlement_location"] == node)]["mcc"].iloc[0]
+            )
+            predicted = solution.compute_mcc(node, {"LN TEST - CONSTRAINT": sp})
+            assert predicted == pytest.approx(observed, rel=1e-3, abs=1e-3)
 
     def test_mcc_zero_when_no_binding_constraints(self, single_solution):
         solution, _ = single_solution

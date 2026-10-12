@@ -98,7 +98,7 @@ function renderDARTTable(spreads) {
       : '<span class="badge badge-green" style="font-size: 8px;">Aligned</span>';
       
     tr.innerHTML = `
-      <td style="font-family: monospace; font-weight: 500;">${s.constraint_name}</td>
+      <td style="font-family: monospace; font-weight: 500;">${escHtml(s.constraint_name)}</td>
       <td style="font-family: monospace; text-align: right; color: var(--red);">$${s.mean_rtbm_shadow_price.toFixed(2)}</td>
       <td style="font-family: monospace; text-align: right; color: var(--amber);">$${s.mean_dam_shadow_price.toFixed(2)}</td>
       <td style="font-family: monospace; text-align: right; font-weight: 600; color: ${s.mean_dart_spread < 0 ? 'var(--red)' : 'var(--green)'};">

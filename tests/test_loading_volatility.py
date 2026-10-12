@@ -14,30 +14,51 @@ def test_rt_constraints_scraper_limit_mapping():
         "Constraint Name,State,Interval,Real Time Effective Limit\n"
         "LN HARBINE - BEATRICE,ACTIVATED,2026-06-02 12:00:00,100.0\n"
     ).encode("utf-8")
-    
+
     scraper = RTConstraintsScraper()
     df = scraper._process_response(DummyResponse(csv_data))
-    
+
     assert "limit_mw" in df.columns
     assert df.loc[0, "limit_mw"] == 100.0
-    assert "pct_of_limit" in df.columns
-    # Activated should have simulated loading percent
-    assert df.loc[0, "pct_of_limit"] > 0
-    assert "monitored_mw" in df.columns
-    assert df.loc[0, "monitored_mw"] > 0
 
-def test_rt_constraints_scraper_binding_loading():
-    # Test that BINDING state yields exactly 100%
+
+def test_rt_constraints_scraper_does_not_fabricate_loading():
+    # SPP's RT binding-constraint files carry no loading columns. The scraper
+    # must leave loading empty rather than invent it (it used to hash the name).
     csv_data = (
         "Constraint Name,State,Interval,Real Time Effective Limit\n"
-        "LN HARBINE - BEATRICE,BINDING,2026-06-02 12:00:00,100.0\n"
+        "LN HARBINE - BEATRICE,ACTIVATED,2026-06-02 12:00:00,100.0\n"
+        "LN HARBINE - BEATRICE,BINDING,2026-06-02 12:05:00,100.0\n"
     ).encode("utf-8")
-    
-    scraper = RTConstraintsScraper()
-    df = scraper._process_response(DummyResponse(csv_data))
-    
-    assert df.loc[0, "pct_of_limit"] == 100.0
-    assert df.loc[0, "monitored_mw"] == 100.0
+
+    df = RTConstraintsScraper()._process_response(DummyResponse(csv_data))
+
+    assert df["pct_of_limit"].isna().all()
+    assert df["monitored_mw"].isna().all()
+
+
+def test_rt_constraints_scraper_keeps_published_loading():
+    # If a file does publish loading, it is passed through untouched.
+    csv_data = (
+        "Constraint Name,State,Interval,Real Time Effective Limit,Percent\n"
+        "LN HARBINE - BEATRICE,ACTIVATED,2026-06-02 12:00:00,100.0,87.5\n"
+    ).encode("utf-8")
+
+    df = RTConstraintsScraper()._process_response(DummyResponse(csv_data))
+
+    assert df.loc[0, "pct_of_limit"] == 87.5
+
+
+def test_scraper_strips_header_whitespace():
+    csv_data = (
+        "Constraint Name,State,Interval, Contingency Name\n"
+        "LN A - B,BINDING,2026-06-02 12:00:00,7950\n"
+    ).encode("utf-8")
+
+    df = RTConstraintsScraper()._process_response(DummyResponse(csv_data))
+
+    assert "contingency_name" in df.columns
+
 
 def test_monitored_flowgate_scraper_inheritance():
     # Test that MonitoredFlowgateScraper inherits from RTConstraintsScraper

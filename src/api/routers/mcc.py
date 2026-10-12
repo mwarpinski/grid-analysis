@@ -4,7 +4,7 @@ GET /api/v1/mcc — Pre-clearing MCC estimation.
 Computes the Marginal Cost of Congestion (MCC) for any node using the
 cached shift factors and the most recent shadow prices:
 
-    MCC_node = -Σ_c (SF_node,c × ShadowPrice_c)
+    MCC_node = Σ_c (SF_node,c × ShadowPrice_c)
 
 Call this endpoint after each new RTBM interval to get a pre-clearing
 estimate of the congestion component of LMP — before SPP officially
@@ -34,12 +34,13 @@ async def get_mcc(
     Returns the estimated Marginal Cost of Congestion for a price node,
     based on cached shift factors × current shadow prices.
 
-    Formula (SPP sign convention):
+    Formula (the convention the shift factors are fit with; SPP publishes
+    binding shadow prices as negative numbers):
 
-        MCC_node = -Σ (SF_node,c × ShadowPrice_c)
+        MCC_node = Σ (SF_node,c × ShadowPrice_c)
 
-    A positive MCC means the node is import-constrained (LMP above system
-    lambda). Negative MCC means export-constrained (LMP below lambda).
+    A positive MCC means the node's LMP is above the system energy price;
+    negative means below it.
 
     This is your pre-clearing price signal — call it every 5 minutes as
     soon as SPP publishes new shadow prices.
@@ -75,10 +76,14 @@ async def get_mcc(
     # Sort by |contribution| descending
     contributions.sort(key=lambda x: abs(x.contribution), reverse=True)
 
+    total_mag = sum(abs(c.shadow_price) for c in contributions)
+    covered_mag = sum(abs(c.shadow_price) for c in contributions if c.shift_factor is not None)
+
     return MCCResponse(
         node=node,
         mcc=round(mcc, 4),
         n_constraints_used=sum(1 for c in contributions if c.shift_factor is not None),
+        shadow_price_coverage=round(covered_mag / total_mag, 4) if total_mag else None,
         shadow_prices_used=contributions,
     )
 

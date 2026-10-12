@@ -23,6 +23,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Set
+from zoneinfo import ZoneInfo
 
 _last_da_scraped_date = None
 
@@ -34,6 +35,15 @@ logger = logging.getLogger(__name__)
 
 # Seconds between SPP portal polls
 SPP_POLL_INTERVAL_SECONDS = 290
+
+# SPP (and MISO's SPP-style file names) label intervals in Central Prevailing Time,
+# regardless of where this server happens to run.
+MARKET_TZ = ZoneInfo("America/Chicago")
+
+
+def _market_now() -> datetime:
+    """Current wall-clock time in the market's timezone, as a naive datetime."""
+    return datetime.now(MARKET_TZ).replace(tzinfo=None)
 
 # WebSocket connection registry — router/websocket.py populates this
 _ws_connections: Set = set()
@@ -103,7 +113,7 @@ async def ingest_once(iso: str = "spp") -> bool:
 
     logger.info(f"[{iso.upper()}] Ingest cycle starting...")
 
-    now = datetime.now()
+    now = _market_now()
 
     if iso == "spp":
         from src.scrapers.spp_rt_constraints_scraper import RTConstraintsScraper
@@ -117,10 +127,16 @@ async def ingest_once(iso: str = "spp") -> bool:
             logger.warning(f"[{iso.upper()}] RT constraint scrape failed: {e}")
             constraints_df = pd.DataFrame()
 
-        # ── Step 2: Scrape latest RTBM LMP (per-interval) ────────────────────
+        # ── Step 2: Scrape RTBM LMP for the SAME interval as the constraints ──
+        # The shift-factor regression joins on interval, so a mismatch here
+        # silently pairs one interval's shadow prices with another's MCC.
         try:
             lmp_scraper = RTBMLMPScraper()
-            lmp_df = await asyncio.to_thread(lmp_scraper.fetch_latest_lmps)
+            if not constraints_df.empty and "interval" in constraints_df.columns:
+                lmp_ts = pd.to_datetime(constraints_df["interval"]).max()
+                lmp_df = await asyncio.to_thread(lmp_scraper.fetch_data, lmp_ts.to_pydatetime())
+            else:
+                lmp_df = await asyncio.to_thread(lmp_scraper.fetch_latest_lmps)
         except Exception as e:
             logger.warning(f"[{iso.upper()}] RT LMP scrape failed: {e}")
             lmp_df = pd.DataFrame()
@@ -135,6 +151,7 @@ async def ingest_once(iso: str = "spp") -> bool:
                 da_scraper = DAConstraintsScraper()
                 logger.info(f"[{iso.upper()}] Running daily Day-Ahead constraints check/scrape...")
                 # Fetch today's and yesterday's to handle timezone/publication overlaps
+                got_today = False
                 for offset_days in (1, 0):
                     target_date = today_date - timedelta(days=offset_days)
                     target_dt = datetime(target_date.year, target_date.month, target_date.day)
@@ -149,7 +166,12 @@ async def ingest_once(iso: str = "spp") -> bool:
                             da_df["interval"] = pd.to_datetime(da_df["interval"])
                         await asyncio.to_thread(store.write_da_interval, da_df, iso=iso)
                         logger.info(f"[{iso.upper()}] Successfully ingested Day-Ahead constraints for {target_date} ({len(da_df)} rows)")
-                _last_da_scraped_date = today_date
+                        if offset_days == 0:
+                            got_today = True
+                # Only stop retrying once today's file was actually obtained
+                # (it may not be published yet on the first cycle of the day).
+                if got_today:
+                    _last_da_scraped_date = today_date
             except Exception as e:
                 logger.warning(f"[{iso.upper()}] Daily Day-Ahead constraint check/scrape failed: {e}")
     elif iso == "miso":
@@ -208,10 +230,13 @@ async def ingest_once(iso: str = "spp") -> bool:
     else:
         latest_interval_ts = datetime.now(timezone.utc)
 
-    # 4a. Get binding constraints for regime key and shadow prices
+    # 4a. Get binding constraints for regime key and shadow prices.
+    # Select on a nonzero shadow price, NOT on State == "BINDING": SPP also
+    # reports priced constraints as BREACHED, and those carry over half of the
+    # total shadow-price magnitude.  Dropping them makes the live MCC estimate
+    # wrong (R² 0.49 vs 0.999 on 2026-10-10) and disagrees with the solver,
+    # which has always selected on shadow price alone.
     binding = constraints_df.copy()
-    if "state" in binding.columns:
-        binding = binding[binding["state"].astype(str).str.upper() == "BINDING"]
     if "shadow_price" in binding.columns:
         binding = binding[binding["shadow_price"].abs() > 1e-4]
 
@@ -291,7 +316,10 @@ async def ingest_once(iso: str = "spp") -> bool:
 
     # ── Step 5: Update SF cache (re-solves if regime changed) ───────────
     iso_cache = cache.for_iso(iso)
-    re_solved = iso_cache.update(
+    # The solve is CPU-bound pandas/numpy work; keep it off the event loop so
+    # the API and WebSockets stay responsive while it runs.
+    re_solved = await asyncio.to_thread(
+        iso_cache.update,
         interval=interval_snapshot,
         constraints_df=constraints_df,
         lmp_df=lmp_df if not lmp_df.empty else pd.DataFrame(),

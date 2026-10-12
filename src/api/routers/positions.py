@@ -93,8 +93,11 @@ async def get_portfolio_risk(
         description="Constraint name to evaluate portfolio exposure against",
     ),
     shadow_price_override: Optional[float] = Query(
-        None, ge=0,
-        description="Override shadow price ($/MWh). If omitted, uses live price from ingest cache.",
+        None,
+        description=(
+            "Override shadow price ($/MWh). SPP publishes binding shadow prices as "
+            "negative numbers. If omitted, uses live price from ingest cache."
+        ),
     ),
     iso: str = Query(
         "spp",

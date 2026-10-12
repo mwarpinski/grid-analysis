@@ -125,6 +125,36 @@ class SFCache:
 
         return False
 
+    def seed(self, constraints_df: pd.DataFrame, lmp_df: pd.DataFrame) -> bool:
+        """
+        Pre-load the rolling history (e.g. from the Parquet store at startup) and
+        solve once.  Without this the cache starts empty and no shift factors
+        exist until ~10 intervals of a constraint have accumulated live.
+
+        Returns True if a solution was produced.
+        """
+        from src.analysis.multi_constraint_sf import calculate_shift_factors
+
+        if constraints_df.empty or lmp_df.empty:
+            return False
+        self._constraints_history = self._append_and_trim(pd.DataFrame(), constraints_df)
+        self._lmp_history = self._append_and_trim(pd.DataFrame(), lmp_df)
+        try:
+            self.solution = calculate_shift_factors(
+                constraints_df=self._constraints_history,
+                lmp_df=self._lmp_history,
+                min_intervals=10,
+            )
+            self.last_solved = datetime.now()
+            logger.info(
+                f"Seeded SF cache: {len(self._constraints_history)} constraint rows, "
+                f"{len(self._lmp_history)} LMP rows, {len(self.solution._flat)} SF pairs."
+            )
+            return True
+        except Exception as e:
+            logger.error(f"SF cache seeding failed: {e}", exc_info=True)
+            return False
+
     def get_shadow_prices(self) -> Dict[str, float]:
         """Return the most recent shadow price snapshot."""
         if self.latest_interval is None:
@@ -145,9 +175,7 @@ class SFCache:
         new: pd.DataFrame,
     ) -> pd.DataFrame:
         """Append new rows and trim to rolling window."""
-        if existing.empty:
-            return new.copy()
-        combined = pd.concat([existing, new], ignore_index=True)
+        combined = new.copy() if existing.empty else pd.concat([existing, new], ignore_index=True)
 
         if "interval" in combined.columns:
             combined = combined.drop_duplicates(
@@ -229,6 +257,9 @@ class MultiISOSFCache:
 
     def get_shadow_prices(self) -> Dict[str, float]:
         return self.for_iso("spp").get_shadow_prices()
+
+    def seed(self, constraints_df: pd.DataFrame, lmp_df: pd.DataFrame, iso: str = "spp") -> bool:
+        return self.for_iso(iso).seed(constraints_df, lmp_df)
 
     def is_ready(self) -> bool:
         return self.for_iso("spp").is_ready()

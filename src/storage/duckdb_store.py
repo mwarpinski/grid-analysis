@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -424,7 +425,10 @@ class DuckDBStore:
     ) -> pd.DataFrame:
         """Query LMP (MCC component) history."""
         parquet_pattern = str(self._lmp_dir_for_iso(iso) / "lmp_*.parquet")
-        extra = f"AND settlement_location = '{node}'" if node else ""
+        extra = ""
+        if node:
+            safe_node = node.replace("'", "''")
+            extra = f"AND settlement_location = '{safe_node}'"
         return self._query(parquet_pattern, start=start, end=end, extra_filters=extra)
 
     def list_available_intervals(
@@ -650,11 +654,18 @@ class DuckDBStore:
                 combined = pd.concat([existing, df], ignore_index=True)
                 if key_cols:
                     combined = combined.drop_duplicates(subset=key_cols, keep="last")
-                combined.to_parquet(path, index=False)
+                self._write_parquet_atomic(combined, path)
             else:
-                df.to_parquet(path, index=False)
+                self._write_parquet_atomic(df, path)
         except Exception as e:
             logger.error(f"Parquet write failed ({path}): {e}")
+
+    @staticmethod
+    def _write_parquet_atomic(df: pd.DataFrame, path: Path) -> None:
+        """Write via a temp file + rename so a crash can't leave a truncated day file."""
+        tmp = path.with_suffix(".parquet.tmp")
+        df.to_parquet(tmp, index=False)
+        os.replace(tmp, path)
 
     def _query(
         self,

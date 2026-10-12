@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 from io import StringIO
@@ -40,9 +41,19 @@ class RTBMLMPScraper(BaseSPPScraper):
             df['GMTIntervalEnd'] = pd.to_datetime(df['GMTIntervalEnd'])
         return df
 
-    def fetch_latest_lmps(self) -> pd.DataFrame:
-        """Fetch the most recent RTBM LMP data"""
-        current_time = datetime.now()
+    def fetch_latest_lmps(self, max_lookback_intervals: int = 6) -> pd.DataFrame:
+        """
+        Fetch the most recent published RTBM LMP data.
+
+        SPP labels files in Central time and publishes each interval 30-90 s
+        after it ends, so the newest file is often not there yet; walk back up
+        to ``max_lookback_intervals`` intervals until one exists.
+        """
+        now = datetime.now(ZoneInfo("America/Chicago")).replace(tzinfo=None)
         # Round down to nearest 5 minutes since SPP updates every 5 minutes
-        current_time = current_time.replace(minute=(current_time.minute // 5) * 5, second=0, microsecond=0)
-        return self.fetch_data(current_time)
+        current_time = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
+        for offset in range(max_lookback_intervals + 1):
+            df = self.fetch_data(current_time - timedelta(minutes=5 * offset))
+            if not df.empty:
+                return df
+        return pd.DataFrame()

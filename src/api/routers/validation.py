@@ -6,25 +6,28 @@ Three endpoints that answer the core question:
 
 Validation strategy
 -------------------
-1. MCC Back-Prediction Test (primary)
-   Ground truth: SPP publishes MCC per node (from LMP files) AND shadow prices
-   per constraint (from BC files). We already scrape both every 5 minutes.
+1. MCC Hold-out Test (primary): GET /mcc-holdout
+   Fit on the first part of the history, then reconstruct MCC on later
+   intervals the fit never saw, and compare to SPP's published MCC.
 
-   Identity:  MCC_node = Σᵢ ( SF[node,i] × ShadowPrice[i] )
+       Identity:  MCC_node = Σᵢ ( SF[node,i] × ShadowPrice[i] )
 
-   We reconstruct MCC using our SF estimates and compare to SPP's published
-   values. If our SFs are correct the reconstruction error should be small
-   (< $0.10/MWh for most nodes).
+   This is the only check here that says anything about predictive accuracy.
 
-2. Regime Consistency Check
-   Within a stable constraint regime the shadow price / MCC relationship is
-   fixed by network topology — SFs should be constant. We measure how much
-   our per-interval ratio estimates scatter around the regime mean.
+2. MCC Back-Prediction (in-sample): GET /mcc-backtest
+   Scores the CURRENT solution on the same history it was fit on.  It confirms
+   the arithmetic and finds problem nodes, but a good score here does not mean
+   the shift factors will predict future MCC (an overfit or collinear fit scores
+   near-perfectly in-sample).
 
-3. Physical Bounds Check
-   Shift factors must satisfy |SF| ≤ 1 by network physics (they represent
-   the fraction of an injection that appears on a monitored element).
-   Values outside this range indicate numerical issues or data quality problems.
+3. Fit diagnostics: GET /regime-consistency
+   In-sample R² and residuals of the fit.
+
+4. Physical Bounds Check
+   Shift factors for a plain line are bounded by |SF| ≤ 1.  Contingency-based
+   flowgates (most SPP constraints) combine PTDFs with outage distribution
+   factors and can legitimately exceed 1, so treat violations as a prompt to
+   look, not as proof of error.
 """
 
 from __future__ import annotations
@@ -85,7 +88,10 @@ async def mcc_backtest(
     ),
 ):
     """
-    **Primary validation test.**
+    **In-sample reconstruction check** (see ``/mcc-holdout`` for the out-of-sample test).
+
+    The solution being scored was fit on this same history, so good numbers here
+    are necessary but not sufficient.
 
     Uses SPP's published MCC values as ground truth.  For each interval in the
     history window, reconstructs MCC = Σ(SF × ShadowPrice) using our estimated
@@ -257,21 +263,61 @@ async def mcc_backtest(
 
 
 # ---------------------------------------------------------------------------
+# 1b. Out-of-sample hold-out
+# ---------------------------------------------------------------------------
+
+@router.get("/mcc-holdout")
+async def mcc_holdout(
+    days: int = Query(default=7, ge=1, le=90, description="History window in days"),
+    train_frac: float = Query(
+        default=0.7, gt=0.1, lt=0.95,
+        description="Fraction of intervals (in time order) used to fit; the rest are scored.",
+    ),
+    min_intervals: int = Query(
+        default=10, ge=1,
+        description="A constraint must bind in at least this many training intervals to be estimated.",
+    ),
+):
+    """
+    **Out-of-sample validation.**
+
+    Fits shift factors on the first ``train_frac`` of the history and reconstructs
+    MCC on the later intervals, which the fit never saw.  Compare ``mae`` with
+    ``mean_baseline_mae`` (the error of just predicting each interval's mean MCC),
+    and check ``unmodeled_share`` — the part of out-of-sample shadow-price
+    magnitude carried by constraints that never bound during training and so
+    have no shift factors at all.
+    """
+    from src.analysis.multi_constraint_sf import time_split_validation
+
+    constraints_df, lmp_df = _load_history(days)
+    if constraints_df.empty or lmp_df.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No historical data available for the past {days} days.",
+        )
+    result = time_split_validation(
+        constraints_df, lmp_df, train_frac=train_frac, min_intervals=min_intervals
+    )
+    result["days"] = days
+    result["train_frac"] = train_frac
+    return result
+
+
+# ---------------------------------------------------------------------------
 # 2. Regime Consistency
 # ---------------------------------------------------------------------------
 
 @router.get("/regime-consistency")
 async def regime_consistency():
     """
-    **Regime stability check.**
+    **Fit diagnostics (in-sample).**
 
-    Within each binding constraint regime (fixed set of binding constraints),
-    shift factors should be constant — they are determined by network topology,
-    not by load level.  This endpoint measures how much our per-interval ratio
-    estimates scatter around the regime mean.
-
-    A regime with high coefficient of variation (CV > 0.3) suggests the
-    topology changed mid-regime or the data is noisy.
+    Reports the in-sample R² and residual spread of the current solution, plus
+    the rank and condition number of the shadow-price design matrix.  A high
+    condition number or rank < K means some constraints always move together
+    and their individual shift factors are not identifiable, even though R²
+    still looks excellent.  Use ``/mcc-holdout`` for real predictive accuracy.
     """
     if cache.solution is None:
         raise HTTPException(status_code=503, detail="SF solution not yet available.")
@@ -293,6 +339,8 @@ async def regime_consistency():
             "n_constraints":     sol.n_constraints,
             "n_intervals":       sol.n_intervals,
             "n_nodes_solved":    len(sol.shift_factors),
+            "design_rank":       sol.rank,
+            "design_condition_number": sol.condition_number,
             "r2": {
                 "mean":   round(float(np.mean(r2_vals)), 4),
                 "p10":    round(float(np.percentile(r2_vals, 10)), 4),
@@ -317,6 +365,7 @@ async def regime_consistency():
 
     return {
         "n_regimes_solved": len(regimes),
+        "unmodeled_constraints": list(getattr(cache.solution, "unmodeled_constraints", [])),
         "summary": {
             "stable":   n_stable,
             "marginal": n_marginal,

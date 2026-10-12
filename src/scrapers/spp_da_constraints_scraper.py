@@ -62,6 +62,9 @@ class DAConstraintsScraper(BaseSPPScraper):
             logger.error(f"Failed to parse DA constraints CSV: {e}")
             return pd.DataFrame()
 
+        # DA headers carry stray whitespace (e.g. " Contingency Name")
+        df.columns = [str(c).strip() for c in df.columns]
+
         # Shared rename map with RT scraper
         df = df.rename(columns={
             k: v for k, v in _COLUMN_RENAME.items() if k in df.columns

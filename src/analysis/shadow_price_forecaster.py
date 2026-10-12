@@ -61,12 +61,13 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.preprocessing import StandardScaler
 
 logger = logging.getLogger(__name__)
 
-# Minimum rows needed before we attempt ML; below this we use persistence
-MIN_TRAINING_ROWS: int = 20
+# Minimum rows needed before we attempt ML; below this we use persistence.
+# 200 rows is ~17 hours of 5-minute data. With the 288-interval lag and 72-interval
+# rolling windows, a few dozen rows leaves most features empty.
+MIN_TRAINING_ROWS: int = 200
 
 # Interval length in minutes (SPP RTBM is 5-min)
 INTERVAL_MINUTES: int = 5
@@ -155,9 +156,11 @@ class FitResult:
     constraint: str
     trained_at: datetime
     n_training_rows: int
-    mae_cv: float          # Out-of-fold MAE from last 20% holdout
-    r2_cv: float           # Out-of-fold R²
+    mae_cv: float          # MAE on the last-20% holdout. Optimistic: the best of several
+                           # configs is picked on this same holdout.
+    r2_cv: float           # R² on the same holdout
     fallback: bool         # True if using persistence model
+    baseline_mae: float = float("nan")   # Persistence ("same as last interval") MAE on the same holdout
     loss_type: str = "squared_error"
     use_symlog: bool = False
     feature_importances: dict = field(default_factory=dict)
@@ -237,7 +240,6 @@ class ShadowPriceForecaster:
 
         # Cache last observed SP for persistence fallback
         if not df.empty:
-            binding = df[df["shadow_price"].abs() > 0.01]
             self._last_sp = float(df["shadow_price"].iloc[-1])
             self._history = df
 
@@ -276,6 +278,10 @@ class ShadowPriceForecaster:
             ("squared_error", True),
             ("absolute_error", True),
         ]
+
+        # Persistence benchmark on the same holdout: predict "same as the previous interval".
+        persistence_pred = np.concatenate([[y_train[-1]], y_test[:-1]])
+        baseline_mae = float(mean_absolute_error(y_test, persistence_pred))
 
         best_mae = float("inf")
         best_r2 = float("-inf")
@@ -318,6 +324,39 @@ class ShadowPriceForecaster:
                     f"[{self.constraint_name}] Failed candidate loss={loss}, symlog={use_symlog}: {e}"
                 )
 
+        # No candidate could be fit → don't pretend we have a trained model.
+        if not np.isfinite(best_mae):
+            logger.warning(f"[{self.constraint_name}] All candidate fits failed — using persistence.")
+            self._model = None
+            self._fit_result = FitResult(
+                constraint=self.constraint_name,
+                trained_at=datetime.now(),
+                n_training_rows=len(df),
+                mae_cv=float("nan"),
+                r2_cv=float("nan"),
+                fallback=True,
+                baseline_mae=baseline_mae,
+            )
+            return self._fit_result
+
+        # A model that cannot beat "same as last interval" is worse than useless.
+        if best_mae >= baseline_mae:
+            logger.info(
+                f"[{self.constraint_name}] ML holdout MAE {best_mae:.3f} does not beat "
+                f"persistence {baseline_mae:.3f} — using persistence."
+            )
+            self._model = None
+            self._fit_result = FitResult(
+                constraint=self.constraint_name,
+                trained_at=datetime.now(),
+                n_training_rows=len(df),
+                mae_cv=best_mae,
+                r2_cv=best_r2,
+                fallback=True,
+                baseline_mae=baseline_mae,
+            )
+            return self._fit_result
+
         # Retrain best configuration on all data (train + holdout)
         best_loss, best_symlog = best_config
 
@@ -348,6 +387,7 @@ class ShadowPriceForecaster:
             fallback=False,
             loss_type=best_loss,
             use_symlog=best_symlog,
+            baseline_mae=baseline_mae,
         )
         return self._fit_result
 
@@ -410,36 +450,47 @@ class ShadowPriceForecaster:
         if current_snapshot and "shadow_price" in current_snapshot:
             self._last_sp = float(current_snapshot["shadow_price"])
 
-        base_time = (
-            current_snapshot.get("interval", datetime.now())
-            if current_snapshot
-            else datetime.now()
-        )
-        if isinstance(base_time, str):
-            base_time = pd.to_datetime(base_time)
+        if current_snapshot and "interval" in current_snapshot:
+            base_time = pd.to_datetime(current_snapshot["interval"])
+        elif not self._history.empty:
+            base_time = pd.to_datetime(self._history["interval"].iloc[-1])
+        else:
+            base_time = pd.Timestamp(datetime.now())
 
         results = []
         running_sp = self._last_sp
-        running_history = self._history.copy() if not self._history.empty else pd.DataFrame(
-            columns=["interval", "shadow_price"]
+
+        # History up to and INCLUDING the current interval, so that the first
+        # forecast step sees the current shadow price as its lag-1 value.
+        cols = [c for c in ("interval", "shadow_price", "pct_of_limit") if c in self._history.columns] or [
+            "interval", "shadow_price"
+        ]
+        running_history = (
+            pd.concat(
+                [
+                    self._history[cols] if not self._history.empty else pd.DataFrame(columns=cols),
+                    pd.DataFrame([{"interval": base_time, "shadow_price": self._last_sp}]),
+                ],
+                ignore_index=True,
+            )
+            .drop_duplicates(subset=["interval"], keep="last")
+            .sort_values("interval")
+            .reset_index(drop=True)
         )
 
         for step in range(1, n_steps + 1):
             interval = base_time + timedelta(minutes=INTERVAL_MINUTES * step)
 
-            # Build snapshot for this step using the running state
-            snap = {"interval": interval, "shadow_price": running_sp}
-
             if self._model is None or not self._feature_cols:
                 predicted = running_sp
             else:
                 try:
-                    # Temporarily append the running state for feature construction
-                    temp_history = pd.concat([
-                        running_history,
-                        pd.DataFrame([{"interval": interval - timedelta(minutes=INTERVAL_MINUTES),
-                                       "shadow_price": running_sp}])
-                    ], ignore_index=True)
+                    # Placeholder row for the interval being forecast: its lag
+                    # features come from earlier rows, its target is unknown.
+                    temp_history = pd.concat(
+                        [running_history, pd.DataFrame([{"interval": interval, "shadow_price": np.nan}])],
+                        ignore_index=True,
+                    )
                     feat_df = build_features(temp_history)
                     last_row = feat_df.iloc[-1]
                     X = np.array([[last_row.get(c, np.nan) for c in self._feature_cols]])
@@ -452,7 +503,8 @@ class ShadowPriceForecaster:
                     logger.debug(f"horizon step {step}: {e}")
                     predicted = running_sp
 
-            # Uncertainty estimate: widen by sqrt(step) × holdout MAE
+            # Rough uncertainty band: holdout MAE scaled by sqrt(step). This is a
+            # heuristic, NOT a calibrated prediction interval.
             mae = self._fit_result.mae_cv if self._fit_result and not np.isnan(
                 self._fit_result.mae_cv
             ) else abs(running_sp) * 0.10  # 10% fallback CI
@@ -467,6 +519,10 @@ class ShadowPriceForecaster:
                 "confidence_high": round(predicted + ci_half, 4),
             })
 
+            running_history = pd.concat(
+                [running_history, pd.DataFrame([{"interval": interval, "shadow_price": predicted}])],
+                ignore_index=True,
+            )
             running_sp = predicted
 
         return results
@@ -499,14 +555,22 @@ class ShadowPriceForecaster:
         )
         next_interval = now_interval + timedelta(minutes=INTERVAL_MINUTES)
 
-        # Temporarily append current snapshot to history for rolling calcs
-        current_row = pd.DataFrame([{
-            "interval": now_interval,
-            "shadow_price": self._last_sp,
-        }])
-        temp_history = pd.concat([self._history, current_row], ignore_index=True).drop_duplicates(
-            subset=["interval"], keep="last"
-        ).sort_values("interval")
+        # Append the current snapshot AND a placeholder row for the interval being
+        # predicted.  build_features() lags every feature by one row, so the
+        # features of the placeholder row are exactly "what we know at `now`",
+        # including the current shadow price as sp_lag1.  (Taking the last
+        # feature row of the history instead gives the features for `now`, which
+        # never see the current price — the forecast ignored it entirely.)
+        extra = pd.DataFrame([
+            {"interval": now_interval, "shadow_price": self._last_sp},
+            {"interval": next_interval, "shadow_price": np.nan},
+        ])
+        cols = [c for c in ("interval", "shadow_price", "pct_of_limit") if c in self._history.columns]
+        temp_history = (
+            pd.concat([self._history[cols], extra], ignore_index=True)
+            .drop_duplicates(subset=["interval"], keep="last")
+            .sort_values("interval")
+        )
 
         feat_df = build_features(temp_history)
         last_row = feat_df.iloc[-1]

@@ -104,6 +104,23 @@ async def lifespan(app: FastAPI):
     On shutdown:
       - Cancel the ingest task cleanly.
     """
+    # Seed each ISO's shift-factor cache from stored history so shift factors are
+    # available immediately instead of after days of live accumulation.
+    async def _seed_cache(iso: str) -> None:
+        import pandas as pd
+        from src.storage.duckdb_store import store
+        end = pd.Timestamp.now()
+        start = end - pd.Timedelta(days=7)
+        constraints_df = await asyncio.to_thread(store.query_constraints, start, end, iso=iso)
+        lmp_df = await asyncio.to_thread(store.query_lmp, start, end, iso=iso)
+        await asyncio.to_thread(cache.for_iso(iso).seed, constraints_df, lmp_df)
+
+    for _iso in ("spp", "miso"):
+        try:
+            await asyncio.wait_for(_seed_cache(_iso), timeout=120.0)
+        except Exception as e:
+            logger.warning(f"[{_iso.upper()}] Could not seed shift-factor cache from history: {e}")
+
     logger.info("Server starting up — running initial ingest cycle...")
     try:
         await asyncio.wait_for(ingest_once(), timeout=60.0)
@@ -169,7 +186,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,   # "*" with credentials is rejected by browsers; no cookies are used
     allow_methods=["*"],
     allow_headers=["*"],
 )

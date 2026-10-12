@@ -9,7 +9,7 @@ critical line loading columns that feed into REQ-2 (bottleneck prediction):
   - Limit                → thermal/stability limit in MW (the "100%")
   - Monitored Value      → actual flow in MW at this interval
   - Percent of Limit     → Monitored Value / Limit × 100  (the "98%" alarm)
-  - State                → BINDING | NEAR_BINDING | VIOLATED
+  - State                → BINDING | BREACHED | ACTIVATED (priced rows are BINDING or BREACHED)
   - Contingency Name     → the N-1 contingency this constraint monitors
 
 These columns allow real-time line loading % alerts ("ticking time bomb" alarm)
@@ -98,14 +98,16 @@ class RTConstraintsScraper(BaseSPPScraper):
         """
         Parse the constraints CSV and normalize all columns.
 
-        Computes ``pct_of_limit`` and ``monitored_mw`` with fallback
-        simulation to handle missing telemetry on monitored flowgates.
+        ``pct_of_limit`` / ``monitored_mw`` are NaN unless SPP supplies them.
         """
         try:
             df = pd.read_csv(io.StringIO(response.content.decode("utf-8")))
         except Exception as e:
             logger.error(f"Failed to parse constraints CSV: {e}")
             return pd.DataFrame()
+
+        # SPP headers occasionally carry stray whitespace (e.g. " Contingency Name")
+        df.columns = [str(c).strip() for c in df.columns]
 
         # Rename to normalized snake_case
         df = df.rename(columns={
@@ -124,38 +126,14 @@ class RTConstraintsScraper(BaseSPPScraper):
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors="coerce")
 
-        # Compute or simulate pct_of_limit and monitored_mw
-        if "pct_of_limit" not in df.columns or df["pct_of_limit"].isnull().all():
-            import hashlib
-            import math
-            
-            def get_simulated_pct(row):
-                state = str(row.get("state", "")).upper()
-                if state in ("BINDING", "ACTIVE_BINDING"):
-                    return 100.0
-                elif state in ("BREACHED", "VIOLATED"):
-                    return 102.5
-                else:  # ACTIVATED / monitored
-                    name = str(row.get("constraint_name", ""))
-                    ts = row.get("interval")
-                    if pd.isnull(ts):
-                        ts = datetime.utcnow()
-                    else:
-                        ts = pd.to_datetime(ts)
-                    h = int(hashlib.md5(name.encode('utf-8')).hexdigest(), 16)
-                    base_load = 70.0 + (h % 18)  # 70% to 88%
-                    minutes = ts.hour * 60 + ts.minute
-                    time_factor = math.sin(2 * math.pi * minutes / 240.0) * (4.0 + (h % 4))
-                    noise = ((h ^ minutes) % 100) / 100.0 - 0.5
-                    pct = base_load + time_factor + noise
-                    return max(40.0, min(99.0, pct))
-            
-            if not df.empty:
-                df["pct_of_limit"] = df.apply(get_simulated_pct, axis=1)
-                if "limit_mw" in df.columns:
-                    df["monitored_mw"] = df["pct_of_limit"] / 100.0 * df["limit_mw"]
-                else:
-                    df["monitored_mw"] = None
+        # SPP's RTBM binding-constraint files do NOT publish loading (no Percent /
+        # Monitored Value columns), so ``pct_of_limit`` and ``monitored_mw`` are
+        # left empty rather than invented.  They were previously fabricated from
+        # a hash of the constraint name and a sine wave, and that fake data fed
+        # alerts, the map, volatility scores and the forecaster.
+        for col in ("pct_of_limit", "monitored_mw"):
+            if col not in df.columns:
+                df[col] = float("nan")
 
         # Numeric coercions
         for col in ("shadow_price", "limit_mw", "monitored_mw", "pct_of_limit"):

@@ -48,7 +48,9 @@ def calculate_dart_spreads(iso: str = "spp", days: int = 30) -> List[Dict[str, A
     if not rt_df.empty and "interval" in rt_df.columns and "constraint_name" in rt_df.columns:
         rt_df = rt_df.copy()
         rt_df["interval"] = pd.to_datetime(rt_df["interval"])
-        rt_df["hour"] = rt_df["interval"].dt.floor("h")
+        # SPP interval labels are interval-END times (DA hour 01:00 = HE01 = 00:00-01:00),
+        # so RT intervals 00:05..01:00 belong to the bucket labelled 01:00 (ceil, not floor).
+        rt_df["hour"] = rt_df["interval"].dt.ceil("h")
         rt_df["shadow_price"] = pd.to_numeric(rt_df["shadow_price"], errors="coerce").fillna(0.0)
         
         # Group by hour and constraint to get hourly average shadow price
@@ -61,7 +63,7 @@ def calculate_dart_spreads(iso: str = "spp", days: int = 30) -> List[Dict[str, A
     if not da_df.empty and "interval" in da_df.columns and "constraint_name" in da_df.columns:
         da_df = da_df.copy()
         da_df["interval"] = pd.to_datetime(da_df["interval"])
-        da_df["hour"] = da_df["interval"].dt.floor("h")
+        da_df["hour"] = da_df["interval"].dt.ceil("h")
         da_df["shadow_price"] = pd.to_numeric(da_df["shadow_price"], errors="coerce").fillna(0.0)
         
         da_grouped = da_df.groupby(["hour", "constraint_name"])["shadow_price"].mean().reset_index()

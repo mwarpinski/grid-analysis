@@ -21,7 +21,7 @@ LMP = MEC (energy cost) + MCC (congestion cost) + MLCC (loss cost)
 The congestion component (MCC) is driven by **Generation Shift Factors (GSFs)** — a number between -1 and +1 that describes how much a MW injected at a given node flows across a specific transmission constraint. The formula is:
 
 ```
-MCC_node = -Σ ( GSF[node, constraint] × ShadowPrice[constraint] )
+MCC_node = Σ ( GSF[node, constraint] × ShadowPrice[constraint] )
 ```
 
 SPP does not publish GSFs in real time. This platform derives them statistically from historical binding constraint and LMP data, caches them in memory, and re-solves automatically when the set of binding constraints changes.
@@ -30,14 +30,14 @@ SPP does not publish GSFs in real time. This platform derives them statistically
 
 | Capability | Description |
 |---|---|
-| **Live constraint feed** | Auto-refreshing table of every binding RTBM constraint with shadow price, loading %, and alarm state |
+| **Live constraint feed** | Auto-refreshing table of every priced RTBM constraint (BINDING or BREACHED) with shadow price and state. Loading % is shown only if SPP publishes it; the RTBM files currently don't. |
 | **Shift factor exposure** | GSF × ShadowPrice for every node, ranked by impact — the trader's key exposure metric |
 | **Pre-clearing MCC** | Estimated congestion component of LMP computed in-memory before SPP publishes it |
 | **Bilateral flow impact** | "If I inject 50 MW at Node A and buy at Node B, how much flow does that add to Constraint X?" |
 | **Portfolio P&L risk** | Aggregate all positions against current shift factors → net MW contribution + $/hr run rate |
 | **DVR replay** | Scrub back through historical intervals interval-by-interval to backtest positions |
 | **SF validation** | MCC back-prediction test: compare our GSFs to SPP's published ground truth |
-| **Grid map** | Leaflet map of the SPP footprint with lines colored by thermal loading % |
+| **Grid map** | Leaflet map of a *synthetic* SPP schematic. Line names do not correspond to real SPP constraint names yet, so constraints are not placed on the map. |
 
 ---
 
@@ -112,7 +112,7 @@ The dashboard has four panels accessible via the top navigation:
 pytest tests/ -v
 ```
 
-All 70 tests should pass. The suite covers the SF solver, constraint normalizer, regime
+All tests should pass. The suite covers the SF solver, constraint normalizer, regime
 detector, scraper column mappings, and API route registration.
 
 ---
@@ -123,8 +123,8 @@ The full interactive docs are at `/docs`. Highlights:
 
 ```
 # Market state
-GET  /api/v1/constraints/live          Live binding constraints with shadow prices + loading %
-GET  /api/v1/constraints/near-limit    Constraints at ≥ 95% of thermal limit
+GET  /api/v1/constraints/live          Live priced constraints with shadow prices (loading % only if published)
+GET  /api/v1/constraints/near-limit    Constraints at ≥ 95% of thermal limit (empty unless loading is published)
 GET  /api/v1/status                    Server readiness + cache state + disk usage
 
 # Shift factors
@@ -161,33 +161,44 @@ WS   /ws/portfolio      Push stream — live portfolio P&L recalculated each int
 
 ### The math
 
-For each 5-minute RTBM interval where the same set of constraints is binding (a **constraint regime**), SPP publishes:
-- **Shadow prices** per constraint (from the binding constraint CSV)
+For every 5-minute RTBM interval SPP publishes:
+- **Shadow prices** per constraint (from the binding constraint CSV). Binding constraints carry **negative** shadow prices.
 - **MCC** per settlement location (from the LMP CSV)
 
-These satisfy the identity:
+These satisfy the identity (no sign flip — verified at R² ≈ 0.999 on real data):
 
 ```
 MCC[node, t] = Σ_k ( SF[node, k] × ShadowPrice[k, t] )
 ```
 
-With T intervals in a regime and K binding constraints, this is a linear system
-`A × x ≈ b` where:
-- `A` (T × K): shadow price matrix — each row is one interval's shadow prices
-- `b` (T × 1): MCC values for one node across those intervals
-- `x` (K × 1): the unknown shift factors SF[node, constraint_1..K]
+Shift factors are a property of the network, so **all intervals in the window are pooled**
+into one regression, with a shadow price of 0 whenever a constraint is not binding:
+- `A` (T × K): shadow price matrix — one row per interval, one column per constraint
+- `B` (T × N): observed MCC — one column per node
+- `X` (K × N): the unknown shift factors
 
-We solve this with ordinary least squares (`numpy.linalg.lstsq`) for every node
-that has LMP data in those intervals. The solver runs once per regime and is
-cached in memory — subsequent intervals in the same regime only update shadow prices.
+`A X ≈ B` is solved for all nodes at once by least squares with a very light ridge penalty
+(`ShiftFactorCalculator`). Constraints that bind in fewer than `min_intervals` (default 10) intervals are
+not estimated and are listed in `unmodeled_constraints`.
+
+> An earlier version split intervals by the *exact set* of binding constraints and solved each set
+> separately. On real SPP data that solved almost nothing (on 2026-10-10: 231 distinct sets in 286
+> intervals, none with 10 intervals), so it was replaced.
 
 ### When does it re-solve?
 
-The **regime detector** tracks the frozenset of binding constraint names. When
-the set changes (a new constraint binds or an existing one falls out), a new
-regime is detected and the solver re-runs automatically on the rolling 7-day
-history window. This happens asynchronously in the background ingest worker
-and typically completes in under 500 ms.
+On startup the cache is seeded from up to 7 days of stored history. After that, whenever the set of
+binding constraints changes the solver re-runs over the rolling 7-day window, in a worker thread so the
+API stays responsive. A pooled fit over ~2,000 intervals, ~60 constraints and ~1,600 nodes takes about a
+second.
+
+### What it cannot do
+
+A shift factor can only be estimated for a constraint that has **already bound** in the window. A constraint
+that has just started binding contributes congestion the estimate cannot see. On 2026-10-09/10 that was
+37% of shadow-price magnitude (see below). Closing that gap needs network topology (DC power flow), not
+more regression. `GET /api/v1/mcc` reports `shadow_price_coverage` so you can see how much of the
+current congestion the estimate actually covers.
 
 ---
 
@@ -195,45 +206,43 @@ and typically completes in under 500 ms.
 
 > "If your software can prove its predictive accuracy historically, I'll trust it blindly when the screen turns red."
 
-We validate using SPP's own published data as ground truth, which means the test is completely independent of our estimation approach.
+We use SPP's published MCC as ground truth. Only an **out-of-sample** test says anything about predictive accuracy.
 
-### Primary test: MCC back-prediction (`GET /api/v1/validation/mcc-backtest`)
+### Primary test: out-of-sample hold-out (`GET /api/v1/validation/mcc-holdout`)
 
-The key identity is:
+Fit on the first part of the history, then reconstruct MCC on later intervals the fit never saw:
 ```
 predicted_MCC = Σ( SF_estimated[node, constraint] × shadow_price_published[constraint] )
 actual_MCC    = MCC published by SPP in the LMP file
 ```
+It returns in-sample and out-of-sample R² / MAE, a "predict the mean" baseline, and `unmodeled_share`
+(the part of out-of-sample shadow-price magnitude on constraints that never bound during training).
 
-If our shift factors are correct, `predicted_MCC ≈ actual_MCC` for every node in every interval. The endpoint computes this for the past N days (default 7) of Parquet history and returns:
+### Secondary checks
 
-- **Overall R²** — should be > 0.95 for a well-solved regime
-- **MAE per MWh** — typical target < $0.10/MWh; investigate if > $0.50
-- **Per-node breakdown** — sorted by mean absolute error to identify problem nodes
-- **Verdict** — `EXCELLENT / ACCEPTABLE / INVESTIGATE`
-
-This test becomes meaningful after ~1 day of runtime (enough intervals to have statistical power). After 7 days it's fully diagnostic.
-
-### Secondary tests
-
-| Test | Endpoint | What it catches |
+| Check | Endpoint | What it tells you |
 |---|---|---|
-| **Regime consistency** | `/api/v1/validation/regime-consistency` | SF instability within a regime (topology change mid-regime, noisy data) |
-| **Bounds check** | `/api/v1/validation/bounds-check` | `\|SF\| > 1.0` — physically impossible, indicates data quality issues |
-| **Summary** | `/api/v1/validation/summary` | All three checks at once, lightweight |
+| In-sample reconstruction | `/api/v1/validation/mcc-backtest` | Arithmetic sanity and problem nodes. **In-sample**, so it cannot show predictive accuracy. |
+| Fit diagnostics | `/api/v1/validation/regime-consistency` | In-sample R², plus design-matrix rank / condition number (collinear constraints give great R² and meaningless individual shift factors). |
+| Bounds check | `/api/v1/validation/bounds-check` | Flags `\|SF\| > 1`. Contingency-based flowgates can legitimately exceed 1, so treat as a prompt to look. |
 
-### Expected accuracy
+### Measured accuracy
 
-After the solver has seen ≥ 10 intervals per regime (the minimum for the OLS system to be over-determined):
+Measured on real SPP data, 2026-10-05 to 2026-10-10 (RT constraint files + 5-minute LMP files); trained on
+10-05..10-08 (59 constraints modeled, 1,620 nodes), scored on the **unseen** days 10-09 and 10-10:
 
-| Node type | Typical R² | Typical MAE |
-|---|---|---|
-| Nodes near binding constraint | 0.95–0.99 | $0.05–$0.15/MWh |
-| Nodes far from constraint | 0.80–0.95 | $0.10–$0.40/MWh |
-| Regime with K=1 constraint | 0.99+ | < $0.05/MWh |
-| Multi-constraint regime (K>5) | 0.85–0.95 | $0.10–$0.30/MWh |
+| Scope | R² | MAE ($/MWh) | Predict-zero MAE |
+|---|---|---|---|
+| All test intervals | 0.63 | 6.03 | 12.96 |
+| Only intervals where every binding constraint was seen in training (25% of intervals) | 0.98 | 0.38 | 3.99 |
+| Intervals with at least one never-seen binding constraint (75%) | 0.61 | 7.86 | 15.87 |
 
-Nodes with MAE > $1.00/MWh are flagged as problem nodes and returned in `worst_nodes`.
+Takeaways: where the constraints are known the estimate is accurate; most of the error comes from newly
+binding constraints, which have no shift factors. Shift factors of known constraints are fairly stable over
+days (median |ΔSF| ≈ 0.001), though ~30% of constraints' factors correlate below 0.9 between a 4-day fit and a
+later 2-day refit. Longer training windows and a lower `min_intervals` helped modestly (5-day training beat
+1-day by ~0.09 R²). These are six days of one season, not a general guarantee — re-measure with
+`/mcc-holdout` on your own history.
 
 ---
 
@@ -244,7 +253,7 @@ The platform has two storage layers:
 ### In-memory (process lifetime)
 - **SF cache** (`src/api/sf_cache.py`): current `ShiftFactorSolution` + latest shadow prices
 - **Rolling history**: 7-day window of constraint and LMP data used for regression
-- **RAM footprint**: ~60–120 MB
+- **RAM footprint**: not measured; the 7-day LMP window is ~2M+ rows of pandas, so expect it to be larger than the Parquet size by a wide margin
 
 ### On-disk Parquet (persistent)
 Written every 5 minutes to `src/data/timeseries/`:
@@ -329,7 +338,7 @@ grid-analysis/
 │       └── replay_player.js            # DVR scrubber
 ├── scripts/
 │   └── generate_spp_topology.py        # One-time synthetic GeoJSON generator
-├── tests/                              # 70 unit tests
+├── tests/                              # unit + regression tests
 └── pyproject.toml
 ```
 

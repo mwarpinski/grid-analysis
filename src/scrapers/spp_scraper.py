@@ -13,6 +13,8 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+REQUEST_TIMEOUT_SECONDS = 30
+
 class BaseSPPScraper(ABC):
     def __init__(self, base_url: str):
         self.base_url = base_url
@@ -34,11 +36,17 @@ class BaseSPPScraper(ABC):
     def fetch_data(self, date: datetime, type: str = "day") -> pd.DataFrame:
         """Fetch data for a specific date"""
         url = self._build_url(date, type)
-        print(f"Fetching data from {url}")
+        self.logger.debug(f"Fetching data from {url}")
         try:
-            response = requests.get(url)
+            # Without a timeout a stalled connection blocks the ingest thread forever.
+            response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
             response.raise_for_status()
             return self._process_response(response)
+        except requests.HTTPError as e:
+            # A 404 just means the file isn't published (yet); callers walk back.
+            level = logging.DEBUG if e.response is not None and e.response.status_code == 404 else logging.ERROR
+            self.logger.log(level, f"Error fetching data: {e}")
+            return pd.DataFrame()
         except requests.RequestException as e:
             self.logger.error(f"Error fetching data: {e}")
             return pd.DataFrame()

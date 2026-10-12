@@ -6,31 +6,32 @@ Distribution Factors (PTDFs / shift factors) for ISO transmission constraints.
 
 Mathematical Foundation
 -----------------------
-For any interval t with binding constraints k=1..K:
+For every interval t and every constraint k:
 
     MCC[node, t] = Σ_k SF[node, k] × ShadowPrice[k, t]
 
-To solve for SF[node, k] we need many intervals T where the SAME set of K constraints
-bind simultaneously (a "constraint regime"). We then build:
+(ShadowPrice is 0 when constraint k is not binding.)  Note the sign: this is
+the convention the estimator is fit with, and it fits SPP's published RT data
+at R² ≈ 0.999.  SPP publishes binding shadow prices as negative numbers.
 
-    A  (T × K):  each row is the shadow price vector for interval t
-    b  (T × 1):  MCC values for a single node across those intervals
-    x  (K × 1):  the unknown shift factors SF[node, constraint_1..K]
+Shift factors are a property of the network, not of which constraints happen to
+bind together, so ALL intervals are pooled into one regression per node:
 
-And solve:  A @ x ≈ b  via ordinary least-squares (numpy.linalg.lstsq).
+    A  (T × K):  shadow price matrix, one row per interval, one column per constraint
+    B  (T × N):  observed MCC, one column per node
+    X  (K × N):  the unknown shift factors
 
-This requires T ≥ K (more intervals than binding constraints).  Regimes with
-insufficient data are flagged rather than solved.
+    A @ X ≈ B   solved with a very lightly ridge-regularised least squares.
 
-Single-constraint case
-----------------------
-When K=1, the solution simplifies to the well-known identity:
-    SF[node, constraint] = MCC[node] / ShadowPrice[constraint]
-averaged across all binding intervals for robustness.
+An earlier version split intervals by the exact set of binding constraints and
+solved each set separately.  On real SPP data that left almost every interval
+unsolved (median 4 constraints bind together, so exact sets rarely repeat), so
+it was replaced.  Constraints that bind in fewer than ``min_intervals`` intervals
+are reported in ``ShiftFactorSolution.unmodeled_constraints`` instead of solved.
 
 Reference
 ---------
-See also: shift_factor_regimes.py for regime grouping logic.
+See also: shift_factor_regimes.py for regime diagnostics.
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RegimeSolution:
-    """Result of solving shift factors for one constraint regime."""
+    """Result of one shift-factor solve (a pooled fit over all supplied intervals)."""
     constraints: FrozenSet[str]
     n_intervals: int
     n_constraints: int
@@ -63,6 +64,11 @@ class RegimeSolution:
     residual_std: Dict[str, float] = field(default_factory=dict)
     underdetermined: bool = False
     error: Optional[str] = None
+    # Rank / condition number of the shadow price design matrix.  rank < K or a
+    # huge condition number means some constraints move together and their
+    # individual shift factors are not identifiable (R² will still look great).
+    rank: Optional[int] = None
+    condition_number: Optional[float] = None
 
 
 @dataclass
@@ -82,21 +88,26 @@ class ShiftFactorSolution:
     regimes: Dict[FrozenSet[str], RegimeSolution] = field(default_factory=dict)
     # Flat lookup: (node, constraint) -> SF — populated after calling .flatten()
     _flat: Dict[Tuple[str, str], float] = field(default_factory=dict)
+    # Constraints that were binding but too rarely to estimate (see min_intervals)
+    unmodeled_constraints: List[str] = field(default_factory=list)
 
     def flatten(self) -> None:
         """Populate the flat (node, constraint) lookup from all solved regimes."""
         self._flat.clear()
+        weighted_sum: Dict[Tuple[str, str], float] = {}
+        weight: Dict[Tuple[str, str], float] = {}
         for regime in self.regimes.values():
             if regime.error or regime.underdetermined:
                 continue
+            w = float(max(regime.n_intervals, 1))
             for node, sfs in regime.shift_factors.items():
                 for constraint, sf in sfs.items():
                     key = (node, constraint)
-                    if key not in self._flat:
-                        self._flat[key] = sf
-                    else:
-                        # Average across regimes that share a constraint
-                        self._flat[key] = (self._flat[key] + sf) / 2.0
+                    weighted_sum[key] = weighted_sum.get(key, 0.0) + w * sf
+                    weight[key] = weight.get(key, 0.0) + w
+        # Interval-weighted mean across any solutions that share a (node, constraint)
+        for key, total in weighted_sum.items():
+            self._flat[key] = total / weight[key]
 
     def get(self, node: str, constraint: str) -> Optional[float]:
         """Look up a shift factor.  Returns None if not solved."""
@@ -156,9 +167,12 @@ class ShiftFactorSolution:
         Estimate the Marginal Cost of Congestion (MCC) for a node given
         a live snapshot of shadow prices.
 
-        Formula (SPP/MISO convention, note the negative sign):
+        Formula (same convention the shift factors are fit with):
 
-            MCC_node = -Σ_c (SF_node,c × ShadowPrice_c)
+            MCC_node = Σ_c (SF_node,c × ShadowPrice_c)
+
+        SPP publishes binding shadow prices as negative numbers, so the sign of
+        the published shadow price is already carried in the product.
 
         This is the pre-clearing MCC prediction — call this every time a
         new set of shadow prices comes in (e.g., every 5-minute RTBM publish)
@@ -175,15 +189,15 @@ class ShiftFactorSolution:
         Returns
         -------
         float
-            Estimated MCC in $/MWh.  Positive → node is import-constrained
-            (LMP > system lambda).  Negative → node is export-constrained.
+            Estimated MCC in $/MWh.  Positive → LMP is above the system
+            energy price at this node.  Negative → below it.
         """
         mcc = 0.0
         for constraint, sp in shadow_prices.items():
             sf = self.get(node, constraint)
             if sf is not None:
                 mcc += sf * sp
-        return -mcc  # sign convention: MCC = -Σ(SF × SP)
+        return mcc
 
     def flow_impact(
         self,
@@ -277,15 +291,18 @@ class ShiftFactorCalculator:
     Parameters
     ----------
     min_intervals : int
-        Minimum number of intervals required in a regime to attempt solving.
-        Must be > number of binding constraints for the system to be
-        over-determined (preferred) or exactly determined.
+        A constraint must be binding in at least this many intervals to get
+        shift factors estimated (rarer ones are reported as unmodeled), and at
+        least this many intervals must have both shadow prices and LMPs.
     tolerance : float
         Shadow prices with |value| below this threshold are treated as
-        non-binding for regime classification.
+        non-binding.
     validate_bounds : bool
         If True, shift factors outside [-1, 1] are flagged (logged) but not
-        discarded — they may legitimately exceed unity in some network configs.
+        discarded — they may legitimately exceed unity for contingency-based
+        flowgates, whose effective factor combines PTDFs and outage distribution factors.
+    ridge : float
+        Relative strength of the light ridge penalty (0 disables it).
     """
 
     def __init__(
@@ -293,10 +310,12 @@ class ShiftFactorCalculator:
         min_intervals: int = 10,
         tolerance: float = 1e-4,
         validate_bounds: bool = True,
+        ridge: float = 1e-4,
     ) -> None:
         self.min_intervals = min_intervals
         self.tolerance = tolerance
         self.validate_bounds = validate_bounds
+        self.ridge = ridge
 
     # ------------------------------------------------------------------
     # Public API
@@ -309,6 +328,12 @@ class ShiftFactorCalculator:
     ) -> ShiftFactorSolution:
         """
         Estimate shift factors from SPP RT/DA binding constraint + LMP data.
+
+        All intervals are pooled into a single regression per node, with a
+        shadow price of 0 for every constraint that is not binding in an
+        interval.  Shift factors are a property of the network, not of the
+        set of constraints that happen to be binding together, so there is no
+        need to (and, on real SPP data, no way to) split intervals by regime.
 
         Parameters
         ----------
@@ -350,23 +375,28 @@ class ShiftFactorCalculator:
         # Filter to binding constraints only
         binding = constraints_df[
             constraints_df["shadow_price"].abs() > self.tolerance
-        ].copy()
+        ]
 
         solution = ShiftFactorSolution()
+        if binding.empty or lmp_df.empty:
+            return solution
 
-        # Group intervals by constraint regime
-        regimes = self._build_regimes(binding)
-        logger.info(f"Found {len(regimes)} distinct constraint regimes.")
+        # Constraints that bind in too few intervals cannot be estimated.
+        bind_counts = binding.groupby("constraint_name")["interval"].nunique()
+        modeled = sorted(bind_counts[bind_counts >= self.min_intervals].index)
+        solution.unmodeled_constraints = sorted(
+            set(bind_counts.index) - set(modeled)
+        )
+        if not modeled:
+            return solution
 
-        for regime_key, regime_intervals in regimes.items():
-            sol = self._solve_regime(
-                regime_key=regime_key,
-                regime_intervals=regime_intervals,
-                binding_df=binding,
-                lmp_df=lmp_df,
-            )
-            solution.regimes[regime_key] = sol
+        # Only intervals where we have both shadow prices and LMPs inform the fit.
+        intervals = sorted(set(binding["interval"]) & set(lmp_df["interval"]))
+        if len(intervals) < max(self.min_intervals, 1):
+            return solution
 
+        sol = self._solve_pooled(binding, lmp_df, intervals, modeled)
+        solution.regimes[sol.constraints] = sol
         return solution
 
     # ------------------------------------------------------------------
@@ -396,189 +426,121 @@ class ShiftFactorCalculator:
                 f"Got: {set(lmp_df.columns)}"
             )
 
-    def _build_regimes(
-        self, binding_df: pd.DataFrame
-    ) -> Dict[FrozenSet[str], List]:
-        """
-        Group intervals by their binding constraint set.
-
-        Returns
-        -------
-        dict mapping frozenset(constraint_names) -> list of interval timestamps
-        """
-        regimes: Dict[FrozenSet[str], List] = {}
-
-        for interval, grp in binding_df.groupby("interval"):
-            key = frozenset(grp["constraint_name"].unique())
-            if key not in regimes:
-                regimes[key] = []
-            regimes[key].append(interval)
-
-        return regimes
-
-    def _solve_regime(
+    def _solve_pooled(
         self,
-        regime_key: FrozenSet[str],
-        regime_intervals: List,
         binding_df: pd.DataFrame,
         lmp_df: pd.DataFrame,
+        intervals: List,
+        constraints: List[str],
     ) -> RegimeSolution:
-        """Solve shift factors for a single constraint regime."""
-        constraints = sorted(regime_key)
+        """Solve MCC[n, t] = Σ_k x[n, k] · SP[k, t] for every node n at once."""
         K = len(constraints)
-        T = len(regime_intervals)
-
+        T = len(intervals)
         sol = RegimeSolution(
-            constraints=regime_key,
+            constraints=frozenset(constraints),
             n_intervals=T,
             n_constraints=K,
         )
 
-        # Check for sufficient data
-        if T < self.min_intervals:
-            sol.underdetermined = True
-            sol.error = (
-                f"Only {T} intervals available; need at least "
-                f"{self.min_intervals} (min_intervals). Skipping."
+        # A (T × K): shadow prices, 0 where a constraint is not binding.
+        A = (
+            binding_df[binding_df["constraint_name"].isin(constraints)]
+            .pivot_table(
+                index="interval",
+                columns="constraint_name",
+                values="shadow_price",
+                aggfunc="first",
             )
-            logger.debug(
-                f"Regime {constraints}: {sol.error}"
-            )
-            return sol
-
-        if T < K:
-            sol.underdetermined = True
-            sol.error = (
-                f"Under-determined: {T} intervals < {K} constraints. "
-                "Cannot solve uniquely."
-            )
-            logger.warning(f"Regime {constraints}: {sol.error}")
-            return sol
-
-        # Build shadow price matrix A (T × K)
-        A = self._build_shadow_price_matrix(
-            binding_df=binding_df,
-            intervals=regime_intervals,
-            constraints=constraints,
+            .reindex(index=intervals, columns=constraints)
+            .fillna(0.0)
+            .to_numpy(dtype=float)
         )
 
-        if A is None:
-            sol.error = "Failed to build shadow price matrix — missing data."
-            return sol
-
-        # Get all nodes that appear in these intervals
-        interval_lmps = lmp_df[lmp_df["interval"].isin(regime_intervals)]
-        nodes = interval_lmps["settlement_location"].unique()
-
-        logger.info(
-            f"Solving regime [{', '.join(constraints[:3])}{'...' if K > 3 else ''}] "
-            f"T={T} intervals, K={K} constraints, N={len(nodes)} nodes"
+        # B (T × N): observed MCC per node.
+        B_df = (
+            lmp_df[lmp_df["interval"].isin(intervals)]
+            .pivot_table(
+                index="interval",
+                columns="settlement_location",
+                values="mcc",
+                aggfunc="first",
+            )
+            .reindex(index=intervals)
         )
+        nodes = list(B_df.columns)
+        B = B_df.to_numpy(dtype=float)
 
-        # Solve for each node
-        for node in nodes:
-            node_lmps = interval_lmps[
-                interval_lmps["settlement_location"] == node
-            ].set_index("interval")
+        sv = np.linalg.svd(A, compute_uv=False)
+        sol.rank = int(np.sum(sv > sv[0] * 1e-10)) if sv.size and sv[0] > 0 else 0
+        sol.condition_number = (
+            float(sv[0] / sv[-1]) if sv.size and sv[-1] > 0 else float("inf")
+        )
+        if sol.rank < K:
+            logger.warning(
+                f"Pooled design is rank-deficient (rank={sol.rank} < K={K}): "
+                "some constraints always move together, so their individual "
+                "shift factors are not identifiable."
+            )
 
-            # Build b vector (T × 1), aligned to regime_intervals order
-            b = np.array([
-                node_lmps.loc[iv, "mcc"] if iv in node_lmps.index else np.nan
-                for iv in regime_intervals
-            ], dtype=float)
+        logger.info(f"Solving pooled regression: T={T} intervals, K={K} constraints, N={len(nodes)} nodes")
 
-            # Drop rows where MCC is missing
-            valid_mask = ~np.isnan(b)
-            if valid_mask.sum() < K:
-                logger.debug(
-                    f"Node {node}: insufficient MCC data ({valid_mask.sum()} rows). Skipping."
-                )
+        has_all = ~np.isnan(B).any(axis=0)
+        X = np.full((K, len(nodes)), np.nan)
+
+        if has_all.any():
+            X[:, has_all] = self._ridge_lstsq(A, B[:, has_all])
+
+        # Nodes with gaps in their MCC history are solved on the rows they have.
+        for j in np.flatnonzero(~has_all):
+            valid = ~np.isnan(B[:, j])
+            if valid.sum() < K:
                 continue
+            X[:, j] = self._ridge_lstsq(A[valid], B[valid, j][:, None])[:, 0]
 
-            A_valid = A[valid_mask]
-            b_valid = b[valid_mask]
+        for j, node in enumerate(nodes):
+            if np.isnan(X[:, j]).any():
+                continue
+            x = X[:, j]
+            valid = ~np.isnan(B[:, j])
+            b = B[valid, j]
+            resid = b - A[valid] @ x
+            ss_res = float(np.sum(resid ** 2))
+            ss_tot = float(np.sum((b - b.mean()) ** 2))
+            sol.r2_scores[node] = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 1.0
+            sol.residual_std[node] = float(np.sqrt(ss_res / max(1, len(b) - K)))
+            sol.shift_factors[node] = {constraints[k]: float(x[k]) for k in range(K)}
 
-            if K == 1:
-                # Fast path: simple ratio averaged across intervals
-                shadow_prices = A_valid[:, 0]
-                nonzero = np.abs(shadow_prices) > self.tolerance
-                if nonzero.sum() == 0:
-                    continue
-                sfs = b_valid[nonzero] / shadow_prices[nonzero]
-                x = np.array([np.mean(sfs)])
-            else:
-                # Least-squares solution
-                x, residuals, rank, sv = np.linalg.lstsq(
-                    A_valid, b_valid, rcond=None
-                )
-                if rank < K:
-                    logger.debug(
-                        f"Node {node}: rank-deficient matrix (rank={rank} < K={K}). "
-                        "Shift factors may be unreliable."
-                    )
-
-            # Compute R² and residual std
-            b_hat = A_valid @ x
-            ss_res = np.sum((b_valid - b_hat) ** 2)
-            ss_tot = np.sum((b_valid - np.mean(b_valid)) ** 2)
-            r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 1.0
-            residual_std = np.sqrt(ss_res / max(1, len(b_valid) - K))
-
-            # Validate shift factor bounds
             if self.validate_bounds and np.any(np.abs(x) > 1.0):
                 out_of_bounds = [
-                    f"{constraints[i]}={x[i]:.4f}"
-                    for i in range(K)
-                    if abs(x[i]) > 1.0
+                    f"{constraints[k]}={x[k]:.4f}" for k in range(K) if abs(x[k]) > 1.0
                 ]
-                logger.warning(
+                logger.debug(
                     f"Node {node}: shift factor(s) outside [-1, 1]: "
                     f"{', '.join(out_of_bounds)}"
                 )
 
-            sol.shift_factors[node] = {
-                constraints[i]: float(x[i]) for i in range(K)
-            }
-            sol.r2_scores[node] = float(r2)
-            sol.residual_std[node] = float(residual_std)
-
         return sol
 
-    def _build_shadow_price_matrix(
-        self,
-        binding_df: pd.DataFrame,
-        intervals: List,
-        constraints: List[str],
-    ) -> Optional[np.ndarray]:
+    def _ridge_lstsq(self, A: np.ndarray, B: np.ndarray) -> np.ndarray:
         """
-        Build the T × K shadow price matrix A.
+        Least squares with a very light ridge penalty on column-scaled A.
 
-        Row t corresponds to interval ``intervals[t]``.
-        Column k corresponds to constraint ``constraints[k]``.
-        Missing shadow prices are filled with 0 (constraint not binding in that interval).
+        The penalty only matters when columns of A are nearly collinear, where
+        it shrinks the unidentifiable direction toward zero instead of letting
+        it blow up.  It is negligible for well-conditioned problems.
         """
-        T = len(intervals)
-        K = len(constraints)
-        A = np.zeros((T, K), dtype=float)
-
-        # Pivot for fast lookup
-        try:
-            pivot = (
-                binding_df[binding_df["interval"].isin(intervals)]
-                .pivot_table(
-                    index="interval",
-                    columns="constraint_name",
-                    values="shadow_price",
-                    aggfunc="first",
-                )
-                .reindex(index=intervals, columns=constraints, fill_value=0.0)
-            )
-            A = pivot.values.astype(float)
-        except Exception as e:
-            logger.error(f"Failed to build shadow price matrix: {e}")
-            return None
-
-        return A
+        K = A.shape[1]
+        scale = np.sqrt((A ** 2).mean(axis=0))
+        scale[scale == 0] = 1.0
+        A_s = A / scale
+        if self.ridge > 0:
+            lam = np.sqrt(self.ridge * A.shape[0])
+            A_aug = np.vstack([A_s, lam * np.eye(K)])
+            B_aug = np.vstack([B, np.zeros((K, B.shape[1]))])
+        else:
+            A_aug, B_aug = A_s, B
+        x_s = np.linalg.lstsq(A_aug, B_aug, rcond=None)[0]
+        return x_s / scale[:, None]
 
 
 # ---------------------------------------------------------------------------
@@ -601,7 +563,7 @@ def calculate_shift_factors(
     constraints_df : DataFrame
         Columns: ``interval``, ``constraint_name``, ``shadow_price``
     min_intervals : int
-        Minimum intervals per regime to attempt solving.
+        A constraint must bind in at least this many intervals to be estimated.
     tolerance : float
         Shadow price absolute threshold for "binding".
 
@@ -692,6 +654,100 @@ def validate_shift_factors(
     return pd.DataFrame(records)
 
 
+def time_split_validation(
+    constraints_df: pd.DataFrame,
+    lmp_df: pd.DataFrame,
+    train_frac: float = 0.7,
+    min_intervals: int = 10,
+    tolerance: float = 1e-4,
+    ridge: float = 1e-4,
+) -> Dict[str, Any]:
+    """
+    Out-of-sample check: fit on the first ``train_frac`` of intervals (in time
+    order) and score MCC reconstruction on the remaining intervals.
+
+    Scoring a solution on the data it was fit on (as the in-sample backtest
+    does) says almost nothing about whether it will predict tomorrow's MCC.
+
+    Returns a dict with in-sample and out-of-sample R² / MAE / RMSE, the MAE of
+    a trivial "predict the mean MCC" baseline, and ``unmodeled_share`` — the
+    fraction of out-of-sample shadow-price magnitude carried by constraints
+    that had no shift factors (never seen binding in the training window).
+    """
+    c = constraints_df.copy()
+    c.columns = [x.lower() for x in c.columns]
+    c = c.rename(columns={"constraint name": "constraint_name", "shadow price": "shadow_price"})
+    l = lmp_df.copy()
+    l.columns = [x.lower() for x in l.columns]
+    l = l.rename(columns={"settlement location": "settlement_location"})
+    for df in (c, l):
+        if not pd.api.types.is_datetime64_any_dtype(df["interval"]):
+            df["interval"] = pd.to_datetime(df["interval"])
+
+    binding = c[c["shadow_price"].abs() > tolerance]
+    intervals = sorted(set(binding["interval"]) & set(l["interval"]))
+    if len(intervals) < 4:
+        return {"status": "insufficient_data", "n_intervals": len(intervals)}
+    split = int(len(intervals) * train_frac)
+    train_iv, test_iv = intervals[:split], intervals[split:]
+
+    calc = ShiftFactorCalculator(min_intervals=min_intervals, tolerance=tolerance, ridge=ridge)
+    sol = calc.fit(
+        c[c["interval"].isin(train_iv)],
+        l[l["interval"].isin(train_iv)],
+    )
+    sol.flatten()
+    if not sol._flat:
+        return {"status": "no_solution", "n_train_intervals": len(train_iv)}
+
+    names = sorted({k[1] for k in sol._flat})
+    nodes = sorted({k[0] for k in sol._flat})
+    X = np.zeros((len(names), len(nodes)))
+    n_idx = {n: i for i, n in enumerate(names)}
+    m_idx = {n: j for j, n in enumerate(nodes)}
+    for (node, con), sf in sol._flat.items():
+        X[n_idx[con], m_idx[node]] = sf
+
+    def _score(ivs):
+        A = (
+            binding[binding["interval"].isin(ivs)]
+            .pivot_table(index="interval", columns="constraint_name", values="shadow_price", aggfunc="first")
+            .reindex(index=ivs)
+            .fillna(0.0)
+        )
+        modeled = A.reindex(columns=names).fillna(0.0).to_numpy()
+        unmodeled_mag = A.drop(columns=[x for x in names if x in A.columns]).abs().to_numpy().sum()
+        total_mag = A.abs().to_numpy().sum()
+        B = (
+            l[l["interval"].isin(ivs)]
+            .pivot_table(index="interval", columns="settlement_location", values="mcc", aggfunc="first")
+            .reindex(index=ivs, columns=nodes)
+        ).to_numpy(dtype=float)
+        P = modeled @ X
+        mask = ~np.isnan(B)
+        err = (B - P)[mask]
+        obs = B[mask]
+        ss_tot = float(np.sum((obs - obs.mean()) ** 2))
+        return {
+            "n_intervals": len(ivs),
+            "n_observations": int(mask.sum()),
+            "r2": float(1.0 - np.sum(err ** 2) / ss_tot) if ss_tot > 1e-12 else None,
+            "mae": float(np.abs(err).mean()),
+            "rmse": float(np.sqrt(np.mean(err ** 2))),
+            "mean_baseline_mae": float(np.abs(obs - obs.mean()).mean()),
+            "unmodeled_share": float(unmodeled_mag / total_mag) if total_mag else 0.0,
+        }
+
+    return {
+        "status": "ok",
+        "n_constraints_modeled": len(names),
+        "unmodeled_constraints_in_train": len(sol.unmodeled_constraints),
+        "in_sample": _score(train_iv),
+        "out_of_sample": _score(test_iv),
+    }
+
+
+
 # ---------------------------------------------------------------------------
 # Analysis / reporting helpers
 # ---------------------------------------------------------------------------
@@ -751,7 +807,7 @@ def _main() -> None:
         "--min-intervals",
         type=int,
         default=10,
-        help="Minimum intervals per regime (default: 10)",
+        help="Minimum binding intervals per constraint (default: 10)",
     )
     args = parser.parse_args()
 

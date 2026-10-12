@@ -24,6 +24,12 @@ uvicorn = {version = ">=0.27", extras = ["standard"]}
 websockets = ">=12.0"
 duckdb = ">=0.10"
 python-multipart = ">=0.0.9"
+# Imported by src/ but previously undeclared, so a fresh install could not start the server.
+# scikit-learn is capped: 1.9.1 failed every HistGradientBoosting candidate fit on this
+# project's feature matrix (cause not investigated); 1.5.x is the version that was tested.
+scikit-learn = ">=1.5,<1.6"
+joblib = ">=1.4"
+anthropic = ">=0.40"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
