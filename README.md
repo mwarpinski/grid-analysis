@@ -268,6 +268,32 @@ inside the shift-factor fit window; treat their R² as an upper bound.
 
 ---
 
+## The network as a graph
+
+What matters for the research is the *graph*: stations as vertices, lines and transformers as edges, adjacency, and
+parallel circuits (a multigraph); geography is irrelevant. `src/analysis/grid_graph.py` mines that graph from SPP's
+own constraint files: every monitored facility (`LN A - B`) and every single-element contingency
+(`OPPD:SUB3456 NEBRCTY:345:1:11`, which also carries voltage and circuit) names two stations.
+
+**It is a fragment, not the network.** On the first 14 days it has 613 stations and 466 edges (404 lines, 61
+transformers as self-loops, 1 phase shifter) in 212 disconnected components; the largest has 13 stations. An edge is a
+real element SPP named, and adjacent generator stations are much closer in shift-factor space than random pairs
+(median distance 0.63 vs 1.17; 92% closer than the random median; distance rises with hop count), but:
+
+* neighbour lists are **lower bounds**: a missing edge means "never observed", not "not adjacent";
+* "exactly one edge" cannot be asserted: parallel circuits are only visible when contingency strings show distinct
+  circuit numbers (none seen yet);
+* coverage is roughly a quarter of the constraint-visible line population by a capture-recapture estimate (optimistic:
+  the two samples are not independent), and at most a few percent of the lines in a public line dataset;
+* it grows by ~15 new edges a day and is slowing, so more history helps but will not make it complete.
+
+A complete graph needs a network model (a bus/branch list). `grid_graph.external_observations()` merges such a list
+(`a, b, kind, kv, circuit`) into the mined graph, so a buyer with licensed model data can supply the rest.
+
+Endpoints: `GET /api/v1/graph/summary | neighbors | path | edges` (each response repeats the completeness caveat).
+
+---
+
 ## Data storage
 
 The platform has two storage layers:

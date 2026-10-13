@@ -76,7 +76,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.forecast_cache import forecast_cache
 from src.api.ingest_worker import ingest_loop, ingest_once
-from src.api.routers import analytics, geo, constraints, flow_impact, forecast, mcc, shift_factors, validation, websocket
+from src.api.routers import analytics, geo, graph, constraints, flow_impact, forecast, mcc, shift_factors, validation, websocket
 from src.api.routers import constraint_resolver as resolver_router
 from src.analysis.llm_constraint_resolver import resolver as llm_resolver
 from src.api.sf_cache import cache
@@ -212,6 +212,7 @@ app.include_router(websocket.router)
 app.include_router(validation.router)
 app.include_router(analytics.router)
 app.include_router(geo.router)
+app.include_router(graph.router)
 app.include_router(forecast.router)
 app.include_router(resolver_router.router)
 

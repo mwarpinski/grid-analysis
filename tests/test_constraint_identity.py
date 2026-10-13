@@ -114,3 +114,13 @@ def test_parallel_transformers_with_identical_ends_are_not_merged():
     assert ci.add_identity_columns(da)["constraint_key"].nunique() == 2
     assert ci.parse_monitored("XFMR EXIRAWA - EXIRAWA").ambiguous
     assert not ci.parse_monitored("XFMR A - B").ambiguous
+
+
+def test_contingency_keeps_circuit_and_transformer_for_graph_building():
+    line = ci.parse_contingency("OPPD:SUB3456 NEBRCTY:345:2:11")
+    assert line.circuit == "2" and line.transformer is None and line.stations == ("NEBRCTY", "SUB3456")
+    xf = ci.parse_contingency("NSP:LYON_CO XF TR9_3:345 115 34.5:")
+    assert xf.transformer == "TR9_3" and xf.stations == ("LYON_CO",) and xf.kv == 345.0
+    assert ci.parse_contingency("BASE").circuit is None
+    # adding fields must not change keys (aliases/crosswalks rely on them)
+    assert ci.parse_contingency("OPPD:SUB3456 NEBRCTY:345:1:11").key == ci.parse_contingency("OPPD:SUB3456 NEBRCTY:345:2:11").key

@@ -81,6 +81,8 @@ class Contingency:
     kv: Optional[float]            # voltage of the outaged element (first voltage listed)
     owners: Tuple[str, ...]
     raw: str
+    circuit: Optional[str] = None      # circuit number of a line contingency (parallel lines differ here)
+    transformer: Optional[str] = None  # transformer name when the outage is "<station> XF <name>"
 
     @property
     def key(self) -> str:
@@ -126,7 +128,9 @@ def parse_contingency(raw) -> Contingency:
         return Contingency(base=False, stations=(), kv=None, owners=(), raw=s)
     owners = tuple(sorted(parts[0].split()))
     body = parts[1]
-    # "A XF TR9_3" is a transformer: keep both stations/name before XF, drop the transformer id
+    # "A XF TR9_3" is a transformer: keep the station(s) before XF and remember the transformer name
+    xf = re.search(r"\bXF\b\s*(.*)$", body)
+    transformer = xf.group(1).strip() or None if xf else None
     body = re.sub(r"\bXF\b.*$", "XF", body).strip()
     stations = tuple(sorted(t for t in body.split() if t != "XF"))
     kv = None
@@ -137,7 +141,9 @@ def parse_contingency(raw) -> Contingency:
         else:
             # not a voltage: a generating unit at the station (e.g. SPS:HOBBS:COMBINEDCYCLE)
             stations = tuple(sorted(stations + (f"UNIT:{parts[2].strip()}",)))
-    return Contingency(base=False, stations=stations, kv=kv, owners=owners, raw=s)
+    circuit = parts[3].strip() if len(parts) > 3 and parts[3].strip().isdigit() else None
+    return Contingency(base=False, stations=stations, kv=kv, owners=owners, raw=s, circuit=circuit,
+                       transformer=transformer)
 
 
 def element_key(monitored_facility) -> str:
