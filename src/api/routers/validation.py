@@ -59,8 +59,12 @@ def _load_history(days: int) -> tuple[pd.DataFrame, pd.DataFrame]:
     end = pd.Timestamp.utcnow()
     start = end - pd.Timedelta(days=days)
 
-    constraints_df = store.query_constraints(start=start, end=end)
-    lmp_df         = store.query_lmp(start=start, end=end)
+    constraints_df = store.query_constraints(
+        start=start, end=end, columns=["interval", "constraint_name", "shadow_price"]
+    )
+    lmp_df         = store.query_lmp(
+        start=start, end=end, columns=["interval", "settlement_location", "mcc"]
+    )
 
     # Ensure interval column is datetime
     for df in (constraints_df, lmp_df):

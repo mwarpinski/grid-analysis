@@ -121,3 +121,33 @@ def test_api_dart_spreads_route():
         assert "spreads" in json_data
         assert len(json_data["spreads"]) == 1
         assert json_data["spreads"][0]["constraint_name"] == "LINE_A"
+
+
+def test_dart_ignores_days_without_day_ahead_data():
+    """
+    Real-time history usually goes back further than stored Day-Ahead history. RT hours on
+    days with no DA file must not be compared against a fabricated DA price of 0, which
+    flagged every constraint as 'underpriced'.
+    """
+    rt_df = pd.DataFrame([
+        {"interval": "2026-05-14 12:05:00", "constraint_name": "LINE_A", "shadow_price": -500.0},  # no DA that day
+        {"interval": "2026-05-15 00:05:00", "constraint_name": "LINE_A", "shadow_price": -100.0},  # DA exists
+    ])
+    da_df = pd.DataFrame([
+        {"interval": "2026-05-15 01:00:00", "constraint_name": "LINE_A", "shadow_price": -90.0},
+    ])
+    with patch("src.analysis.dart_engine.store") as mock_store:
+        mock_store.query_constraints.return_value = rt_df
+        mock_store.query_da_constraints.return_value = da_df
+        line_a = calculate_dart_spreads(iso="spp", days=30)[0]
+
+    assert line_a["mean_rtbm_shadow_price"] == -100.0       # the 05-14 hour is excluded
+    assert line_a["mean_dart_spread"] == -10.0
+
+
+def test_dart_returns_nothing_without_day_ahead_data():
+    rt_df = pd.DataFrame([{"interval": "2026-05-15 00:05:00", "constraint_name": "A", "shadow_price": -1.0}])
+    with patch("src.analysis.dart_engine.store") as mock_store:
+        mock_store.query_constraints.return_value = rt_df
+        mock_store.query_da_constraints.return_value = pd.DataFrame()
+        assert calculate_dart_spreads(iso="spp", days=30) == []

@@ -5,7 +5,7 @@ Downloads the following from SPP's public Modeling Reports portal:
   - SL_to_Pnode_to_Zone_with_Area.csv   : PNode → Zone → Area mapping
   - SL_Station_BusNumber_Turbine_and_FuelType.xlsx : PNode → EMS station → PSS/E bus number
   - Hub_Definitions.csv                 : Hub aggregate SL → child PNode weight factors
-  - Interface_Definitions.csv           : Flowgate/interface definitions
+  - Interface_Definitions.csv           : Interchange (INT) settlement locations -> weighted child PNodes (NOT flowgates)
 
 Saved to: src/data/topology/
 Re-run anytime to refresh (SPP updates these continuously).
@@ -64,7 +64,7 @@ TOPOLOGY_FILES = {
     "interface_definitions": {
         "url":  BASE + "Interface_Definitions.csv",
         "file": "Interface_Definitions.csv",
-        "desc": "Flowgate / interface definitions and constituent lines",
+        "desc": "Interchange (INT) settlement locations and their weighted child PNodes (not flowgate definitions)",
         "format": "csv",
     },
 }
@@ -154,7 +154,8 @@ def normalize_pnode_zone(raw_path: Path) -> pd.DataFrame:
 def normalize_bus_mapping(raw_path: Path) -> pd.DataFrame:
     """
     Parse SL_Station_BusNumber_Turbine_and_FuelType.xlsx.
-    Output columns: settlement_location, ems_station, psse_bus_number, fuel_type
+    Output columns: settlement_location, ems_area, ems_station, psse_bus_number, psse_name,
+                    ems_kv, ems_unit, ems_mw_max, turbine_type, fuel_type
     """
     df = pd.read_excel(raw_path, dtype=str).fillna("")
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
@@ -173,11 +174,18 @@ def normalize_bus_mapping(raw_path: Path) -> pd.DataFrame:
         ("psse bus number", "psse_bus_number"),
         ("fuel type", "fuel_type"), ("fuel_type", "fuel_type"),
         ("turbine type", "turbine_type"),
+        # Actual SPP headers: SETTLEMENTLOCATION, EMS_AREA, EMS_STATION, PSSE_NUM, PSSE_NAME,
+        # EMS_KV, EMS_UNIT, EMS_MWMAX, TURBINETYPE, FUELTYPE1, FUELTYPE2, INTERCONNECT
+        ("settlementlocation", "settlement_location"),
+        ("ems_area", "ems_area"), ("psse_num", "psse_bus_number"), ("psse_name", "psse_name"),
+        ("ems_kv", "ems_kv"), ("ems_unit", "ems_unit"), ("ems_mwmax", "ems_mw_max"),
+        ("turbinetype", "turbine_type"), ("fueltype1", "fuel_type"),
     ]:
         if src in col_lower:
             rename[col_lower[src]] = dst
     df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
-    keep = [c for c in ["settlement_location", "ems_station", "psse_bus_number", "fuel_type"] if c in df.columns]
+    keep = [c for c in ["settlement_location", "ems_area", "ems_station", "psse_bus_number", "psse_name",
+                        "ems_kv", "ems_unit", "ems_mw_max", "turbine_type", "fuel_type"] if c in df.columns]
     df = df[keep].drop_duplicates()
     logger.info(f"    bus_mapping: {len(df):,} rows")
     return df
@@ -190,7 +198,7 @@ def normalize_hub_definitions(raw_path: Path) -> pd.DataFrame:
     The weight factors define how hub LMPs aggregate from child nodes.
     """
     df = pd.read_csv(raw_path, dtype=str).fillna("")
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    df.columns = [c.strip() for c in df.columns]
     rename = {
         # Actual SPP columns: Settlement Location Name,Parent PNode,Child PNode,Weighting Factor,Settlement Location Type,BAA
         "Settlement Location Name": "hub_name",
@@ -208,9 +216,10 @@ def normalize_hub_definitions(raw_path: Path) -> pd.DataFrame:
         "weighting_factor":         "weight",
     }
     df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     if "weight" in df.columns:
         df["weight"] = pd.to_numeric(df["weight"], errors="coerce")
-    keep = [c for c in ["hub_name", "child_pnode", "weight"] if c in df.columns]
+    keep = [c for c in ["hub_name", "parent_pnode", "child_pnode", "weight", "sl_type", "baa"] if c in df.columns]
     df = df[keep].drop_duplicates()
     logger.info(f"    hub_definitions: {len(df):,} rows, {df['hub_name'].nunique() if 'hub_name' in df.columns else '?'} hubs")
     return df
@@ -219,10 +228,14 @@ def normalize_hub_definitions(raw_path: Path) -> pd.DataFrame:
 def normalize_interface_definitions(raw_path: Path) -> pd.DataFrame:
     """
     Parse Interface_Definitions.csv.
-    Output columns: interface_name, monitored_line, from_area, to_area, limit_mw
+
+    NOTE: despite its name this file does NOT define transmission flowgates. It lists SPP's
+    interchange ("INT") settlement locations (e.g. ties to neighbouring areas) and the weighted
+    child pnodes each one aggregates, in the same layout as Hub_Definitions.csv.
+    Output columns: interface_name, parent_pnode, child_pnode, weight, sl_type, baa
     """
     df = pd.read_csv(raw_path, dtype=str).fillna("")
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    df.columns = [c.strip() for c in df.columns]
     rename = {
         # Same format as hub_definitions: Settlement Location Name,Parent PNode,Child PNode,Weighting Factor,Settlement Location Type,BAA
         "Settlement Location Name": "interface_name",
@@ -240,9 +253,12 @@ def normalize_interface_definitions(raw_path: Path) -> pd.DataFrame:
         "limit_mw":         "limit_mw",
     }
     df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
-    if "limit_mw" in df.columns:
-        df["limit_mw"] = pd.to_numeric(df["limit_mw"], errors="coerce")
-    keep = [c for c in ["interface_name", "monitored_line", "from_area", "to_area", "limit_mw"] if c in df.columns]
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    for numeric in ("limit_mw", "weight"):
+        if numeric in df.columns:
+            df[numeric] = pd.to_numeric(df[numeric], errors="coerce")
+    keep = [c for c in ["interface_name", "parent_pnode", "child_pnode", "weight", "sl_type", "baa",
+                        "monitored_line", "from_area", "to_area", "limit_mw"] if c in df.columns]
     df = df[keep].drop_duplicates()
     logger.info(f"    interface_definitions: {len(df):,} rows")
     return df

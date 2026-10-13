@@ -126,3 +126,62 @@ def test_forecast_training_reads_spp_history_from_multi_iso_cache(monkeypatch, t
 
     assert result.n_training_rows == 30
     assert result.fallback            # too little data for ML, but training must not crash
+
+
+def test_cache_history_keeps_only_needed_columns():
+    """The scraped frames carry many unused columns; holding them all cost ~0.9 GB per 7 days."""
+    constraints_df, lmp_df, _ = make_multi_constraint_data(n_intervals=40, n_nodes=2)
+    constraints_df["junk_text"] = "x" * 50
+    lmp_df["pnode"] = "SOME_PNODE"
+    lmp_df["lmp"] = 1.0
+
+    cache = SFCache()
+    cache.seed(constraints_df, lmp_df)
+
+    assert set(cache._lmp_history.columns) == {"interval", "settlement_location", "mcc"}
+    assert "junk_text" not in cache._constraints_history.columns
+    assert cache.solution is not None and len(cache.solution._flat) > 0
+
+
+def test_ingested_interval_is_not_labelled_utc(monkeypatch):
+    interval = pd.Timestamp("2026-10-10 12:00:00")          # SPP label, Central time
+    monkeypatch.setattr("src.api.sf_cache.cache", MultiISOSFCache())
+    monkeypatch.setattr(ingest_worker, "cache", __import__("src.api.sf_cache", fromlist=["cache"]).cache)
+    monkeypatch.setattr(ingest_worker, "_last_da_scraped_date", datetime.now().date())
+    monkeypatch.setattr(ingest_worker, "broadcast", lambda msg: asyncio.sleep(0))
+    lmp = pd.DataFrame({"interval": [interval], "settlement_location": ["N1"], "mcc": [1.0]})
+
+    with patch("src.scrapers.spp_rt_constraints_scraper.RTConstraintsScraper.fetch_data",
+               return_value=_fake_rt_constraints(interval)), \
+         patch("src.scrapers.spp_rtlmp_scraper.RTBMLMPScraper.fetch_data", return_value=lmp), \
+         patch("src.storage.duckdb_store.DuckDBStore.write_interval"), \
+         patch("src.storage.duckdb_store.DuckDBStore.query_constraints", return_value=pd.DataFrame()):
+        asyncio.run(ingest_worker.ingest_once("spp"))
+
+    latest = ingest_worker.cache.for_iso("spp").latest_interval.interval
+    assert latest.tzinfo is None
+    assert latest == interval
+
+
+def test_fit_with_da_gives_da_only_constraints_shift_factors():
+    """A constraint only the Day-Ahead market priced has no RT shift factors; pooling DA data gives it some."""
+    rt_c, rt_l, true = make_multi_constraint_data(n_intervals=60, n_nodes=3, seed=5)
+    # DA: hourly, binds "LN DA ONLY" (not in RT) with MCC generated from known shift factors
+    hours = pd.date_range("2026-11-02 01:00", periods=40, freq="h")
+    rng = np.random.default_rng(1)
+    sp = -rng.uniform(20, 120, len(hours))
+    da_sf = {"NODE_00": 0.3, "NODE_01": -0.2, "NODE_02": 0.1}
+    da_bc = pd.DataFrame({"interval": hours, "constraint_name": "LN DA ONLY", "shadow_price": sp})
+    da_lmp = pd.DataFrame([{"interval": h, "settlement_location": n, "mcc": da_sf[n] * s}
+                           for h, s in zip(hours, sp) for n in da_sf])
+    cache = SFCache()
+    cache.seed(rt_c, rt_l)
+    assert cache.solution.get("NODE_00", "LN DA ONLY") is None
+
+    assert cache.fit_with_da(da_bc, da_lmp)
+
+    assert cache.solution_with_da.get("NODE_00", "LN DA ONLY") == pytest.approx(0.3, abs=0.02)
+    assert cache.solution_with_da.get("NODE_01", "LN DA ONLY") == pytest.approx(-0.2, abs=0.02)
+    # the RT constraints keep their shift factors
+    assert cache.solution_with_da.get("NODE_00", "LN ALPHA - BETA") == pytest.approx(
+        true["NODE_00"]["LN ALPHA - BETA"], abs=0.02)

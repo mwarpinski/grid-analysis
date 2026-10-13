@@ -75,6 +75,24 @@ async def broadcast(message: dict) -> None:
         _ws_connections.discard(ws)
 
 
+async def _refresh_da_solution(days: int = 7) -> bool:
+    """Re-fit the SPP shift factors on RT history + stored Day-Ahead data (for the analytics endpoints)."""
+    from src.storage.duckdb_store import store
+
+    end = pd.Timestamp(_market_now()) + pd.Timedelta(days=1)
+    start = end - pd.Timedelta(days=days + 1)
+    da_bc = await asyncio.to_thread(
+        lambda: store.query_da_constraints(start, end, columns=["constraint_name", "shadow_price"])
+    )
+    da_lmp = await asyncio.to_thread(
+        lambda: store.query_da_lmp(start, end, columns=["settlement_location", "mcc"])
+    )
+    for d in (da_bc, da_lmp):
+        if not d.empty:
+            d["interval"] = pd.to_datetime(d["interval"])
+    return await asyncio.to_thread(cache.for_iso("spp").fit_with_da, da_bc, da_lmp)
+
+
 async def _scrape_rt_constraints(bc_scraper, now: datetime) -> "pd.DataFrame":
     """
     Fetch the most recent RTBM binding constraint data.
@@ -166,6 +184,21 @@ async def ingest_once(iso: str = "spp") -> bool:
                         logger.info(f"[{iso.upper()}] Successfully ingested Day-Ahead constraints for {target_date} ({len(da_df)} rows)")
                         if offset_days == 0:
                             got_today = True
+                # Day-Ahead hourly LMP / MCC (nodal DART needs the DA price side)
+                from src.scrapers.spp_dalmp_scraper import DALMPScraper
+                da_lmp_scraper = DALMPScraper()
+                for offset_days in (1, 0):
+                    target_date = today_date - timedelta(days=offset_days)
+                    target_dt = datetime(target_date.year, target_date.month, target_date.day)
+                    da_lmp = await asyncio.to_thread(da_lmp_scraper.scrape_day, target_dt)
+                    if not da_lmp.empty:
+                        da_lmp = da_lmp.rename(columns={
+                            "Interval": "interval", "Settlement Location": "settlement_location", "MCC": "mcc",
+                        })
+                        da_lmp.columns = [c.lower() for c in da_lmp.columns]
+                        da_lmp["interval"] = pd.to_datetime(da_lmp["interval"])
+                        await asyncio.to_thread(store.write_da_lmp, da_lmp, iso=iso)
+                await _refresh_da_solution()
                 # Only stop retrying once today's file was actually obtained
                 # (it may not be published yet on the first cycle of the day).
                 if got_today:
@@ -219,14 +252,14 @@ async def ingest_once(iso: str = "spp") -> bool:
 
     # ── Step 4: Build interval snapshot ─────────────────────────────────
     if "interval" in constraints_df.columns:
+        # Intervals stay naive in the ISO's own label zone (SPP: Central). They used to be
+        # tagged UTC, which was wrong by 5-6 hours and made them incomparable with stored
+        # (naive) history.
         latest_interval_ts = pd.to_datetime(constraints_df["interval"]).max()
         if pd.isnull(latest_interval_ts):
-            latest_interval_ts = datetime.now(timezone.utc)
-        else:
-            if latest_interval_ts.tzinfo is None:
-                latest_interval_ts = latest_interval_ts.tz_localize("UTC")
+            latest_interval_ts = pd.Timestamp(_market_now())
     else:
-        latest_interval_ts = datetime.now(timezone.utc)
+        latest_interval_ts = pd.Timestamp(_market_now())
 
     # 4a. Get binding constraints for regime key and shadow prices.
     # Select on a nonzero shadow price, NOT on State == "BINDING": SPP also
@@ -256,8 +289,6 @@ async def ingest_once(iso: str = "spp") -> bool:
         # Combine history with current interval
         if not history_df.empty:
             history_df["interval"] = pd.to_datetime(history_df["interval"])
-            if history_df["interval"].dt.tz is None:
-                history_df["interval"] = history_df["interval"].dt.tz_localize("UTC")
             combined_df = pd.concat([history_df, constraints_df], ignore_index=True)
         else:
             combined_df = constraints_df.copy()

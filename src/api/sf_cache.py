@@ -41,6 +41,13 @@ class CachedInterval:
     regime_key: FrozenSet[str]           # frozenset of binding constraint names
 
 
+# Columns the solver and forecaster actually use. The scraped frames carry many more
+# (pnode, lmp, mlc, mec, gmt timestamps, text columns ...); keeping them all made the
+# 7-day history ~0.9 GB instead of well under half that.
+_CONSTRAINT_COLS = ["interval", "constraint_name", "shadow_price", "state"]
+_LMP_COLS = ["interval", "settlement_location", "mcc"]
+
+
 @dataclass
 class SFCache:
     """
@@ -58,6 +65,10 @@ class SFCache:
 
     # Timestamp of the last successful ingest
     last_updated: Optional[datetime] = None
+
+    # Shift factors fit on RT and DA data together (covers constraints only the DA market priced).
+    # Used by the analytics endpoints; the live MCC estimate keeps using ``solution``.
+    solution_with_da: Optional[object] = None
 
     # Timestamp of the last SF solve (only changes when regime changes)
     last_solved: Optional[datetime] = None
@@ -91,10 +102,10 @@ class SFCache:
 
         # Append to rolling history
         self._constraints_history = self._append_and_trim(
-            self._constraints_history, constraints_df
+            self._constraints_history, constraints_df, _CONSTRAINT_COLS
         )
         self._lmp_history = self._append_and_trim(
-            self._lmp_history, lmp_df
+            self._lmp_history, lmp_df, _LMP_COLS
         )
 
         # Check if the regime changed (new set of binding constraints)
@@ -137,8 +148,10 @@ class SFCache:
 
         if constraints_df.empty or lmp_df.empty:
             return False
-        self._constraints_history = self._append_and_trim(pd.DataFrame(), constraints_df)
-        self._lmp_history = self._append_and_trim(pd.DataFrame(), lmp_df)
+        self._constraints_history = self._append_and_trim(
+            pd.DataFrame(), constraints_df, _CONSTRAINT_COLS
+        )
+        self._lmp_history = self._append_and_trim(pd.DataFrame(), lmp_df, _LMP_COLS)
         try:
             self.solution = calculate_shift_factors(
                 constraints_df=self._constraints_history,
@@ -153,6 +166,25 @@ class SFCache:
             return True
         except Exception as e:
             logger.error(f"SF cache seeding failed: {e}", exc_info=True)
+            return False
+
+    def fit_with_da(self, da_bc: pd.DataFrame, da_lmp: pd.DataFrame) -> bool:
+        """Fit shift factors on the RT history plus Day-Ahead data and keep them as ``solution_with_da``."""
+        from src.analysis.congestion_analytics import fit_shift_factors_rt_da
+
+        if (self._constraints_history.empty or self._lmp_history.empty
+                or da_bc is None or da_lmp is None or da_bc.empty or da_lmp.empty):
+            return False
+        try:
+            sol = fit_shift_factors_rt_da(
+                self._constraints_history, self._lmp_history, da_bc, da_lmp, min_intervals=10
+            )
+            sol.flatten()
+            self.solution_with_da = sol
+            logger.info(f"RT+DA shift factors fit: {len(sol._flat)} SF pairs.")
+            return True
+        except Exception as e:
+            logger.error(f"RT+DA shift factor fit failed: {e}", exc_info=True)
             return False
 
     def get_shadow_prices(self) -> Dict[str, float]:
@@ -173,8 +205,11 @@ class SFCache:
         self,
         existing: pd.DataFrame,
         new: pd.DataFrame,
+        keep_columns: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        """Append new rows and trim to rolling window."""
+        """Append new rows, keep only the needed columns, and trim to the rolling window."""
+        if keep_columns is not None and not new.empty:
+            new = new[[c for c in keep_columns if c in new.columns]]
         combined = new.copy() if existing.empty else pd.concat([existing, new], ignore_index=True)
 
         if "interval" in combined.columns:

@@ -247,6 +247,28 @@ later 2-day refit. Longer training windows and a lower `min_intervals` helped mo
 
 ---
 
+## Research outputs
+
+Everything below is built on the pooled shift factors and works on the stored history (`scripts/backfill_history.py`
+for RT, and `--market dam` for Day-Ahead constraints **and** Day-Ahead LMPs).
+
+| Output | Endpoint | Notes |
+|---|---|---|
+| Nodal DART (RT − DA congestion) | `GET /api/v1/analytics/dart/nodes` | Hourly, hour-ending aligned. The t-stat ranks nodes but overstates significance (hours are autocorrelated). |
+| DART decomposition by constraint | `GET /api/v1/analytics/dart/decompose` | `Σ SF × (SP_RT − SP_DA)`. Reports the unattributed share and any persistent unexplained offset. |
+| Constraint behaviour | `GET /api/v1/analytics/constraints/stats` | Binding hours, run length, DA-vs-RT surprises. `group_by=monitored_facility` counts a miss only if DA priced the same element under any contingency. |
+| Best node pairs | `GET /api/v1/analytics/pairs` | Widest expected MCC gap per $ of shadow price. |
+| Generator/load change scenario | `POST /api/v1/analytics/scenario/injection-change` | Flow change per constraint, as a share of the static rating. **Line outages are not modeled** (needs a network model). |
+| "What if these constraints bind" | `POST /api/v1/analytics/scenario/constraints` | Nodal MCC at given shadow prices, or at a historical quantile. |
+
+`python scripts/sanity_report.py` runs all of them on the stored history, fitting shift factors on the earlier part and
+evaluating on the later part, and prints PASS/FAIL checks. On the first 14 days: shift factors fit on RT+DA data reproduce the
+held-out DA MCC with R² ≈ 0.75 (RT-only: 0.73), and the DART decomposition explains R² ≈ 0.43 of the out-of-sample spread (pooled), with ~32% of the
+RT−DA shadow-price move on constraints that had no shift factors. The API's `in_sample` flag marks decompositions that fall
+inside the shift-factor fit window; treat their R² as an upper bound.
+
+---
+
 ## Data storage
 
 The platform has two storage layers:

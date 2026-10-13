@@ -93,3 +93,16 @@ def test_model_beats_persistence_one_step_out_of_sample():
         model_err.append(abs(fc.predict(snap) - y))
         persist_err.append(abs(test.shadow_price[i] - y))
     assert np.mean(model_err) < np.mean(persist_err)
+
+
+def test_timezone_aware_snapshot_interval_does_not_break_forecasts():
+    """Live snapshots were tagged UTC while stored history is naive; /forecast/{c} returned HTTP 500."""
+    hist = _autoregressive_series()
+    train = hist.iloc[:1200]
+    fc = ShadowPriceForecaster("X")
+    assert not fc.fit(train).fallback
+    aware_now = train.interval.iloc[-1].tz_localize("UTC")
+    snap = {"interval": aware_now, "shadow_price": -50.0}
+
+    assert isinstance(fc.predict(snap), float)
+    assert len(fc.predict_horizon(4, snap)) == 4

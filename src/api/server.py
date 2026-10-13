@@ -76,7 +76,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.forecast_cache import forecast_cache
 from src.api.ingest_worker import ingest_loop, ingest_once
-from src.api.routers import constraints, flow_impact, forecast, mcc, shift_factors, validation, websocket
+from src.api.routers import analytics, constraints, flow_impact, forecast, mcc, shift_factors, validation, websocket
 from src.api.routers import constraint_resolver as resolver_router
 from src.analysis.llm_constraint_resolver import resolver as llm_resolver
 from src.api.sf_cache import cache
@@ -107,13 +107,22 @@ async def lifespan(app: FastAPI):
     # Seed each ISO's shift-factor cache from stored history so shift factors are
     # available immediately instead of after days of live accumulation.
     async def _seed_cache(iso: str) -> None:
+        from src.api.ingest_worker import _refresh_da_solution
         import pandas as pd
         from src.storage.duckdb_store import store
         end = pd.Timestamp.now()
         start = end - pd.Timedelta(days=7)
-        constraints_df = await asyncio.to_thread(store.query_constraints, start, end, iso=iso)
-        lmp_df = await asyncio.to_thread(store.query_lmp, start, end, iso=iso)
+        # Read only the columns the solver needs: the full frames are several times larger.
+        from src.api.sf_cache import _CONSTRAINT_COLS, _LMP_COLS
+        constraints_df = await asyncio.to_thread(
+            lambda: store.query_constraints(start, end, iso=iso, columns=_CONSTRAINT_COLS)
+        )
+        lmp_df = await asyncio.to_thread(
+            lambda: store.query_lmp(start, end, iso=iso, columns=_LMP_COLS)
+        )
         await asyncio.to_thread(cache.for_iso(iso).seed, constraints_df, lmp_df)
+        if iso == "spp":
+            await _refresh_da_solution()
 
     for _iso in ("spp", "miso"):
         try:
@@ -201,6 +210,7 @@ app.include_router(flow_impact.router)
 app.include_router(mcc.router)
 app.include_router(websocket.router)
 app.include_router(validation.router)
+app.include_router(analytics.router)
 app.include_router(forecast.router)
 app.include_router(resolver_router.router)
 

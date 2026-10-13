@@ -86,3 +86,30 @@ def test_rewriting_a_day_is_idempotent(store):
 
     out = pd.read_parquet(store._constraints_dir_for_iso("spp") / "constraints_20261010.parquet")
     assert len(out) == 288
+
+
+def test_column_projection_reads_only_requested_and_tolerates_missing(store):
+    df = pd.DataFrame({
+        "interval": pd.date_range("2026-10-10 00:05", periods=5, freq="5min"),
+        "constraint_name": "C", "shadow_price": -1.0, "junk": "x",
+    })
+    store.write_interval(df, iso="spp")
+    start, end = pd.Timestamp("2026-10-10"), pd.Timestamp("2026-10-11")
+
+    out = store.query_constraints(start, end, columns=["constraint_name", "shadow_price", "no_such_col"])
+
+    assert set(out.columns) == {"interval", "constraint_name", "shadow_price"}
+    assert len(out) == 5
+
+
+def test_da_lmp_round_trip_and_day_partitioning(store):
+    ivs = pd.date_range("2026-10-10 01:00", periods=24, freq="h")      # HE01 .. HE24 (= 00:00 next day)
+    lmp = pd.DataFrame({
+        "interval": ivs, "settlement_location": "N1", "mcc": 1.5, "lmp": 30.0,
+    })
+    store.write_da_lmp(lmp, iso="spp")
+
+    assert _files(store) == ["da_lmp_20261010.parquet"]
+    out = store.query_da_lmp(pd.Timestamp("2026-10-10"), pd.Timestamp("2026-10-11 00:00"), node="N1")
+    assert len(out) == 24
+    assert store.manifest_status("2026-10-10", "da_lmp", iso="spp") == "complete"

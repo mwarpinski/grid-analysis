@@ -85,6 +85,7 @@ class DuckDBStore:
             self._lmp_dir_for_iso(iso)
             self._sf_dir_for_iso(iso)
             self._da_constraints_dir_for_iso(iso)
+            self._da_lmp_dir_for_iso(iso)
 
         # Track last pruning run — prune at most once per calendar day
         self._last_pruned: Optional[datetime] = None
@@ -121,6 +122,11 @@ class DuckDBStore:
 
     def _da_constraints_dir_for_iso(self, iso: str) -> Path:
         d = self._iso_dir(iso) / "da_constraints"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _da_lmp_dir_for_iso(self, iso: str) -> Path:
+        d = self._iso_dir(iso) / "da_lmp"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -211,6 +217,22 @@ class DuckDBStore:
             )
             self._update_manifest(date_key, "da_bc", part, iso=iso)
 
+    def write_da_lmp(
+        self,
+        lmp_df: pd.DataFrame,
+        iso: str = "spp",
+    ) -> None:
+        """Persist Day-Ahead hourly LMP / MCC by settlement location."""
+        if lmp_df.empty:
+            return
+        for date_str, date_key, part in self._split_by_day(lmp_df, iso):
+            self._append_parquet(
+                df=part,
+                directory=self._da_lmp_dir_for_iso(iso),
+                filename=f"da_lmp_{date_str}.parquet",
+            )
+            self._update_manifest(date_key, "da_lmp", part, iso=iso)
+
     def write_shift_factors(
         self,
         sf_df: pd.DataFrame,
@@ -258,7 +280,8 @@ class DuckDBStore:
             constraints_dir = self._constraints_dir_for_iso(iso)
             lmp_dir = self._lmp_dir_for_iso(iso)
             sf_dir = self._sf_dir_for_iso(iso)
-            for subdir in (constraints_dir, lmp_dir, sf_dir):
+            da_dirs = (self._da_constraints_dir_for_iso(iso), self._da_lmp_dir_for_iso(iso))
+            for subdir in (constraints_dir, lmp_dir, sf_dir, *da_dirs):
                 deleted, kept, freed_bytes = 0, 0, 0
                 for path in sorted(subdir.glob("*.parquet")):
                     # Parse date from filename stem, e.g. "constraints_20240101"
@@ -350,6 +373,7 @@ class DuckDBStore:
         constraint_name: Optional[str] = None,
         min_shadow_price: Optional[float] = None,
         iso: str = "spp",
+        columns: Optional[list] = None,
     ) -> pd.DataFrame:
         """
         Query constraint history for a date range.
@@ -364,6 +388,8 @@ class DuckDBStore:
             Filter by minimum |shadow_price|.
         iso : str, optional
             The ISO namespace to query.
+        columns : list of str, optional
+            Only read these columns (Parquet is columnar, so this cuts memory a lot).
 
         Returns
         -------
@@ -378,6 +404,7 @@ class DuckDBStore:
                 constraint_name=constraint_name,
                 min_shadow_price=min_shadow_price,
             ),
+            columns=columns,
         )
 
     def query_da_constraints(
@@ -387,6 +414,7 @@ class DuckDBStore:
         constraint_name: Optional[str] = None,
         min_shadow_price: Optional[float] = None,
         iso: str = "spp",
+        columns: Optional[list] = None,
     ) -> pd.DataFrame:
         """Query Day-Ahead constraint history for a date range."""
         parquet_pattern = str(self._da_constraints_dir_for_iso(iso) / "da_constraints_*.parquet")
@@ -398,6 +426,7 @@ class DuckDBStore:
                 constraint_name=constraint_name,
                 min_shadow_price=min_shadow_price,
             ),
+            columns=columns,
         )
 
     def query_lmp(
@@ -406,14 +435,31 @@ class DuckDBStore:
         end: str | datetime,
         node: Optional[str] = None,
         iso: str = "spp",
+        columns: Optional[list] = None,
     ) -> pd.DataFrame:
-        """Query LMP (MCC component) history."""
+        """Query LMP (MCC component) history. ``columns`` limits which columns are read."""
         parquet_pattern = str(self._lmp_dir_for_iso(iso) / "lmp_*.parquet")
         extra = ""
         if node:
             safe_node = node.replace("'", "''")
             extra = f"AND settlement_location = '{safe_node}'"
-        return self._query(parquet_pattern, start=start, end=end, extra_filters=extra)
+        return self._query(parquet_pattern, start=start, end=end, extra_filters=extra, columns=columns)
+
+    def query_da_lmp(
+        self,
+        start: str | datetime,
+        end: str | datetime,
+        node: Optional[str] = None,
+        iso: str = "spp",
+        columns: Optional[list] = None,
+    ) -> pd.DataFrame:
+        """Query Day-Ahead hourly LMP / MCC history (``columns`` limits what is read)."""
+        parquet_pattern = str(self._da_lmp_dir_for_iso(iso) / "da_lmp_*.parquet")
+        extra = ""
+        if node:
+            safe_node = node.replace("'", "''")
+            extra = f"AND settlement_location = '{safe_node}'"
+        return self._query(parquet_pattern, start=start, end=end, extra_filters=extra, columns=columns)
 
     def list_available_intervals(
         self,
@@ -493,7 +539,7 @@ class DuckDBStore:
         intervals = df["interval"].nunique() if "interval" in df.columns else 0
         rows = len(df)
 
-        if data_type == "da_bc":
+        if data_type in ("da_bc", "da_lmp"):
             threshold = 24
         elif iso.lower() == "miso":
             threshold = 24 if data_type == "lmp" else 240
@@ -677,6 +723,7 @@ class DuckDBStore:
         start: str | datetime,
         end: str | datetime,
         extra_filters: str = "",
+        columns: Optional[list] = None,
     ) -> pd.DataFrame:
         """Run a DuckDB query over Parquet files matching the pattern."""
         import glob
@@ -687,8 +734,25 @@ class DuckDBStore:
         start_ts = pd.Timestamp(start)
         end_ts = pd.Timestamp(end)
 
+        conn = duckdb.connect(":memory:")
+        if columns:
+            # Only project columns that exist in these files (e.g. MISO frames lack some
+            # SPP columns); "interval" is always needed for the time filter and ordering.
+            try:
+                available = {
+                    r[0] for r in conn.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet({files!r}, union_by_name=True)"
+                    ).fetchall()
+                }
+            except Exception:
+                available = None
+            wanted = list(dict.fromkeys(["interval", *columns]))
+            cols = [c for c in wanted if available is None or c in available]
+            select = ", ".join('"' + c.replace('"', '""') + '"' for c in cols)
+        else:
+            select = "*"
         sql = f"""
-            SELECT *
+            SELECT {select}
             FROM read_parquet({files!r}, union_by_name=True)
             WHERE CAST(interval AS TIMESTAMP) >= '{start_ts}'
               AND CAST(interval AS TIMESTAMP) <= '{end_ts}'
@@ -696,7 +760,6 @@ class DuckDBStore:
             ORDER BY interval ASC
         """
         try:
-            conn = duckdb.connect(":memory:")
             return conn.execute(sql).df()
         except Exception as e:
             logger.error(f"DuckDB query failed: {e}")

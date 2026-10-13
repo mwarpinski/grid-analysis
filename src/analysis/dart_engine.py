@@ -39,8 +39,10 @@ def calculate_dart_spreads(iso: str = "spp", days: int = 30) -> List[Dict[str, A
         logger.error(f"Error querying DAM constraints for DART: {e}")
         da_df = pd.DataFrame()
         
-    if rt_df.empty and da_df.empty:
-        logger.warning("No historical constraint data found for DART calculation.")
+    if rt_df.empty or da_df.empty:
+        # A spread needs both sides. Treating a missing market as a shadow price of 0
+        # would flag every constraint as "underpriced".
+        logger.warning("DART needs both real-time and day-ahead constraint history; one is empty.")
         return []
         
     # 3. Process RTBM constraints
@@ -70,8 +72,16 @@ def calculate_dart_spreads(iso: str = "spp", days: int = 30) -> List[Dict[str, A
         da_grouped = da_grouped.rename(columns={"shadow_price": "dam_sp"})
         da_hourly = da_grouped
 
-    # 5. Merge on constraint_name and hour to align
-    if rt_hourly.empty and da_hourly.empty:
+    # 5. Merge on constraint_name and hour to align.
+    # Only market days that actually have Day-Ahead data are comparable: for those days a
+    # constraint absent from the DA file really did have a DA shadow price of 0, but for
+    # days with no DA file at all we know nothing, and 0 would be fabricated.
+    if rt_hourly.empty or da_hourly.empty:
+        return []
+    _market_day = lambda h: (h - pd.Timedelta(hours=1)).dt.normalize()   # HE24 (00:00) belongs to the prior day
+    da_days = set(_market_day(da_hourly["hour"]))
+    rt_hourly = rt_hourly[_market_day(rt_hourly["hour"]).isin(da_days)]
+    if rt_hourly.empty:
         return []
         
     if rt_hourly.empty:

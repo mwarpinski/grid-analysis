@@ -77,6 +77,12 @@ INTERVAL_MINUTES: int = 5
 # Feature engineering helpers
 # ---------------------------------------------------------------------------
 
+def _naive(ts) -> pd.Timestamp:
+    """Timestamp without a timezone, so live snapshots compare with (naive) stored history."""
+    ts = pd.Timestamp(ts)
+    return ts.tz_localize(None) if ts.tzinfo is not None else ts
+
+
 def _time_features(ts: pd.Series) -> pd.DataFrame:
     """Extract cyclical and categorical time features from a datetime Series."""
     df = pd.DataFrame(index=ts.index)
@@ -451,7 +457,7 @@ class ShadowPriceForecaster:
             self._last_sp = float(current_snapshot["shadow_price"])
 
         if current_snapshot and "interval" in current_snapshot:
-            base_time = pd.to_datetime(current_snapshot["interval"])
+            base_time = _naive(current_snapshot["interval"])
         elif not self._history.empty:
             base_time = pd.to_datetime(self._history["interval"].iloc[-1])
         else:
@@ -549,7 +555,7 @@ class ShadowPriceForecaster:
 
         # The "next" interval's features depend on the current state being appended
         now_interval = (
-            pd.to_datetime(current_snapshot["interval"])
+            _naive(current_snapshot["interval"])
             if current_snapshot and "interval" in current_snapshot
             else self._history["interval"].iloc[-1]
         )

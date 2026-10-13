@@ -596,8 +596,9 @@ async def backfill_spp_da(
         for d in all_days:
             key = d.isoformat()
             status = manifest.get(key, {}).get("da_bc", {}).get("status", "missing")
-            flag = "✓" if status == "complete" else "✗"
-            logger.info(f"  {flag} {key}  DA_BC={status}")
+            lmp_status = manifest.get(key, {}).get("da_lmp", {}).get("status", "missing")
+            flag = "✓" if status == "complete" and lmp_status == "complete" else "✗"
+            logger.info(f"  {flag} {key}  DA_BC={status}  DA_LMP={lmp_status}")
         return
 
     if force:
@@ -606,13 +607,17 @@ async def backfill_spp_da(
         days_to_process = [
             d for d in all_days
             if store.manifest_status(d.isoformat(), "da_bc", iso="spp") != "complete"
+            or store.manifest_status(d.isoformat(), "da_lmp", iso="spp") != "complete"
         ]
 
     if not days_to_process:
         logger.info("Nothing to backfill — all days complete per manifest.")
         return
 
+    from src.scrapers.spp_dalmp_scraper import DALMPScraper
+
     da_scraper = DAConstraintsScraper()
+    da_lmp_scraper = DALMPScraper()
     total_days = len(days_to_process)
 
     for idx, day in enumerate(days_to_process, 1):
@@ -641,6 +646,23 @@ async def backfill_spp_da(
                 logger.info(f"  → DA_BC: no binding constraints (marked complete)")
         except Exception as e:
             logger.error(f"  → DA_BC error fetching {day}: {e}")
+
+        # Day-Ahead hourly LMP / MCC by settlement location (needed for nodal DART)
+        try:
+            await asyncio.sleep(delay)
+            lmp = await asyncio.to_thread(da_lmp_scraper.scrape_day, datetime(day.year, day.month, day.day))
+            if not lmp.empty:
+                lmp = lmp.rename(columns={
+                    "Interval": "interval", "Settlement Location": "settlement_location", "MCC": "mcc",
+                })
+                lmp.columns = [c.lower() for c in lmp.columns]
+                lmp["interval"] = pd.to_datetime(lmp["interval"])
+                store.write_da_lmp(lmp, iso="spp")
+                logger.info(f"  → DA_LMP stored: {len(lmp)} rows")
+            else:
+                logger.warning(f"  → DA_LMP: no data for {day}")
+        except Exception as e:
+            logger.error(f"  → DA_LMP error fetching {day}: {e}")
 
 # ---------------------------------------------------------------------------
 # CLI

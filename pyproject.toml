@@ -30,6 +30,7 @@ python-multipart = ">=0.0.9"
 scikit-learn = ">=1.5,<1.6"
 joblib = ">=1.4"
 anthropic = ">=0.40"
+openpyxl = ">=3.1"   # scripts/fetch_spp_topology.py reads SPP's station/bus mapping .xlsx
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
