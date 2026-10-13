@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, FrozenSet, List, Optional
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import pandas as pd
 
@@ -44,7 +44,9 @@ class CachedInterval:
 # Columns the solver and forecaster actually use. The scraped frames carry many more
 # (pnode, lmp, mlc, mec, gmt timestamps, text columns ...); keeping them all made the
 # 7-day history ~0.9 GB instead of well under half that.
-_CONSTRAINT_COLS = ["interval", "constraint_name", "shadow_price", "state"]
+_CONSTRAINT_COLS = [
+    "interval", "constraint_name", "shadow_price", "state", "monitored_facility", "contingent_facility",
+]
 _LMP_COLS = ["interval", "settlement_location", "mcc"]
 
 
@@ -69,6 +71,13 @@ class SFCache:
     # Shift factors fit on RT and DA data together (covers constraints only the DA market priced).
     # Used by the analytics endpoints; the live MCC estimate keeps using ``solution``.
     solution_with_da: Optional[object] = None
+
+    # Provisional shift factors for currently-binding constraints that have none, borrowed from sibling
+    # constraints on the same physical element ({(node, constraint): sf}). Kept apart from ``solution``
+    # so fitted and borrowed values are never confused.
+    provisional: Dict[Tuple[str, str], float] = field(default_factory=dict)
+    _name_key: Dict[str, str] = field(default_factory=dict)       # constraint name -> constraint_key
+    _orientation: Dict[str, int] = field(default_factory=dict)    # constraint name -> +1/-1
 
     # Timestamp of the last SF solve (only changes when regime changes)
     last_solved: Optional[datetime] = None
@@ -99,6 +108,7 @@ class SFCache:
 
         self.latest_interval = interval
         self.last_updated = datetime.now()
+        self._learn_identity(constraints_df)
 
         # Append to rolling history
         self._constraints_history = self._append_and_trim(
@@ -148,6 +158,7 @@ class SFCache:
 
         if constraints_df.empty or lmp_df.empty:
             return False
+        self._learn_identity(constraints_df)
         self._constraints_history = self._append_and_trim(
             pd.DataFrame(), constraints_df, _CONSTRAINT_COLS
         )
@@ -167,6 +178,35 @@ class SFCache:
         except Exception as e:
             logger.error(f"SF cache seeding failed: {e}", exc_info=True)
             return False
+
+    def _learn_identity(self, constraints_df: pd.DataFrame) -> None:
+        """Remember each constraint name's identity key and direction (from the structured facility columns)."""
+        if constraints_df is None or constraints_df.empty or "monitored_facility" not in constraints_df.columns:
+            return
+        from src.analysis import constraint_identity as ci
+
+        d = constraints_df[[c for c in ("constraint_name", "monitored_facility", "contingent_facility")
+                            if c in constraints_df.columns]].drop_duplicates()
+        if "contingent_facility" not in d.columns:
+            d = d.assign(contingent_facility="")
+        d = ci.add_identity_columns(d)
+        for n, k, o in zip(d["constraint_name"], d["constraint_key"], d["orientation"]):
+            self._name_key.setdefault(n, k)
+            self._orientation.setdefault(n, 1 if pd.isna(o) else int(o))
+
+    def refresh_priors(self, names) -> int:
+        """
+        Borrow shift factors from sibling constraints for those of ``names`` that have none.
+        Returns the number of constraints that received a provisional vector.
+        """
+        from src.analysis.congestion_analytics import sibling_prior
+
+        sol = self.solution
+        if sol is None or not getattr(sol, "_flat", None):
+            self.provisional = {}
+            return 0
+        self.provisional = sibling_prior(sol._flat, list(names), self._name_key, self._orientation)
+        return len({k[1] for k in self.provisional})
 
     def fit_with_da(self, da_bc: pd.DataFrame, da_lmp: pd.DataFrame) -> bool:
         """Fit shift factors on the RT history plus Day-Ahead data and keep them as ``solution_with_da``."""

@@ -1,4 +1,8 @@
 """
+DEPRECATED: the dashboard map no longer uses this synthetic schematic. It now shows real (approximate)
+constraint locations built from public data by scripts/build_geo_crosswalk.py. This script and
+ui/data/spp_only_lines.geojson remain only for reference and can be deleted.
+
 generate_spp_topology.py
 ========================
 Generates a SYNTHETIC, DELIBERATELY FUZZED SPP transmission grid topology

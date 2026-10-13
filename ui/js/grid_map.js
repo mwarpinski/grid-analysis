@@ -1,42 +1,38 @@
 /**
- * grid_map.js — Leaflet map of the SPP transmission grid.
+ * grid_map.js — Leaflet map of where SPP constraints are.
  *
- * Lines are colored by loading %:
- *   green (<70%) → yellow (70-90%) → orange (90-95%) → red (>95%)
+ * Each constraint is a marker at its estimated location (public data only; see
+ * src/analysis/geo_crosswalk.py).  These are REGIONAL positions: every marker carries a method, a
+ * quality label and an uncertainty radius, shown as a circle on hover/select.  About half of all
+ * constraints cannot be placed and do not appear.  Currently binding constraints are colored by
+ * shadow price magnitude.
  *
- * When a constraint is selected, a ZONE HEATMAP overlay replaces the
- * default line highlight.  Each SPP pricing zone is drawn as a circle
- * sized and colored by its aggregate shift factor:
+ * When a constraint is selected, a ZONE HEATMAP overlay shows which SPP pricing zones it affects:
+ * each zone is a circle sized and colored by its aggregate shift factor
  *   red   = exacerbates congestion (SF > 0)
  *   green = relieves congestion    (SF < 0)
  *   gray  = negligible             (|SF| < 0.005)
- *
- * This approach requires no knowledge of individual substation locations.
  * Zone centroids are publicly available SPP market zone geography.
  */
 
 let gridMap        = null;
-let linesLayer     = null;
-let busLayer       = null;
+let locationsLayer = null;   // one marker per placed constraint
 let heatmapLayer   = null;   // zone SF circles — rebuilt on each constraint select
-let constraintLineIndex = {};  // constraintName (lower) → Leaflet polyline
+let uncertaintyCircle = null;
+let constraintMarkers = {};  // constraintName (lower) → { marker, props }
+let _liveFetchAt   = 0;      // throttle for fetching locations of brand-new live constraints
 
 // ── Color helpers ────────────────────────────────────────────────────────────
 
-function loadingColor(pct) {
-  if (pct == null) return null;
-  if (pct >= 95) return '#ef4444';
-  if (pct >= 85) return '#f97316';
-  if (pct >= 70) return '#eab308';
+function shadowPriceColor(sp) {
+  const m = Math.abs(sp || 0);
+  if (m >= 500) return '#ef4444';
+  if (m >= 100) return '#f97316';
+  if (m >= 20)  return '#eab308';
   return '#22c55e';
 }
 
-function voltageColor(kv) {
-  if (kv >= 345) return '#818cf8';
-  if (kv >= 230) return '#38bdf8';
-  if (kv >= 138) return '#94a3b8';
-  return '#475569';
-}
+const IDLE_STYLE = { radius: 4, color: '#64748b', fillColor: '#475569', weight: 1, opacity: 0.8, fillOpacity: 0.5 };
 
 /**
  * Diverging SF → color scale.
@@ -71,94 +67,105 @@ function initMap() {
     maxZoom: 12,
   }).addTo(gridMap);
 
-  loadGeoJSON();
+  loadConstraintLocations();
+  addApproximationNote();
 }
 
-// ── GeoJSON base layer ────────────────────────────────────────────────────────
+function addApproximationNote() {
+  const note = document.createElement('div');
+  note.style.cssText = `
+    position: absolute; bottom: 8px; left: 8px; z-index: 1000; max-width: 260px;
+    background: rgba(15,23,42,0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;
+    padding: 6px 9px; font-size: 10px; color: #94a3b8; pointer-events: none;`;
+  note.textContent = 'Approximate locations from public data (regional, not substation-precise). Hover a dot for its uncertainty radius; unplaced constraints are not shown.';
+  document.getElementById('grid-map').appendChild(note);
+}
 
-async function loadGeoJSON() {
+// ── Constraint locations ──────────────────────────────────────────────────────
+
+function _addConstraintMarker(c) {
+  if (c.lat == null || c.lon == null) return;
+  const key = c.constraint_name.toLowerCase();
+  if (constraintMarkers[key]) return;
+  const approx = c.quality !== 'good';
+  const marker = L.circleMarker([c.lat, c.lon], { ...IDLE_STYLE, dashArray: approx ? '2 3' : null });
+  marker.bindTooltip(
+    `<b>${c.constraint_name}</b><br>${String(c.method).replace('_', ' ')} · ${c.quality}` +
+    `<br>±${Math.round(c.radius_km)} km`,
+    { sticky: true, className: 'leaflet-tooltip-dark' }
+  );
+  marker.on('mouseover', () => showUncertainty(c));
+  marker.on('mouseout', () => { if (!_selectedName) clearUncertainty(); });
+  marker.on('click', () => {
+    window.onConstraintSelect && window.onConstraintSelect(c.constraint_name);
+  });
+  marker.addTo(locationsLayer);
+  constraintMarkers[key] = { marker, props: c };
+}
+
+async function loadConstraintLocations() {
+  locationsLayer = L.layerGroup().addTo(gridMap);
   try {
-    const data = await fetch('/data/spp_only_lines.geojson').then(r => {
-      if (!r.ok) throw new Error(`GeoJSON not found (${r.status})`);
-      return r.json();
-    });
-
-    const lineFeatures  = data.features.filter(f => f.geometry.type === 'LineString');
-    const pointFeatures = data.features.filter(f => f.geometry.type === 'Point');
-
-    linesLayer = L.geoJSON(lineFeatures, {
-      style: (feature) => {
-        const kv = feature.properties?.voltage_kv ?? 115;
-        const w  = kv >= 345 ? 2.5 : kv >= 230 ? 1.8 : 1.2;
-        return { color: voltageColor(kv), weight: w, opacity: 0.6 };
-      },
-      onEachFeature: (feature, layer) => {
-        const name = feature.properties?.constraint_name;
-        if (name) {
-          constraintLineIndex[name.toLowerCase()] = layer;
-          layer.on('click', () => {
-            window.onConstraintSelect && window.onConstraintSelect(name);
-          });
-          const kv   = feature.properties?.voltage_kv ?? '?';
-          const from = feature.properties?.from_bus ?? '';
-          const to   = feature.properties?.to_bus ?? '';
-          layer.bindTooltip(
-            `<b>${name}</b><br>${from} → ${to}<br>${kv} kV`,
-            { sticky: true, className: 'leaflet-tooltip-dark' }
-          );
-        }
-      },
-    }).addTo(gridMap);
-
-    busLayer = L.geoJSON(pointFeatures, {
-      pointToLayer: (feature, latlng) => {
-        const kv = feature.properties?.voltage_kv ?? 115;
-        const r  = kv >= 345 ? 5 : kv >= 230 ? 3.5 : 2.5;
-        return L.circleMarker(latlng, {
-          radius: r,
-          fillColor: voltageColor(kv),
-          color: '#0f172a',
-          weight: 1,
-          opacity: 1,
-          fillOpacity: 0.9,
-        });
-      },
-      onEachFeature: (feature, layer) => {
-        const id = feature.properties?.bus_id ?? '';
-        const kv = feature.properties?.voltage_kv ?? '';
-        layer.bindTooltip(`${id} — ${kv} kV`, { sticky: true, className: 'leaflet-tooltip-dark' });
-      },
-    }).addTo(gridMap);
-
-    console.info(`SPP topology loaded: ${lineFeatures.length} lines, ${pointFeatures.length} buses`);
-
+    const data = await api.get('/api/v1/geo/constraints');
+    data.constraints.forEach(_addConstraintMarker);
+    console.info(`Constraint locations loaded: ${data.n}`);
   } catch (e) {
-    console.info('GeoJSON not available — map will show base tiles only.', e.message);
+    console.info('No constraint locations yet (run scripts/build_geo_crosswalk.py).', e.message);
   }
+}
+
+/** Constraints that started binding after the last build have no marker yet: fetch their locations. */
+async function refreshLiveLocations() {
+  if (Date.now() - _liveFetchAt < 30000) return;
+  _liveFetchAt = Date.now();
+  try {
+    const data = await api.get('/api/v1/geo/live');
+    data.constraints.forEach(_addConstraintMarker);
+  } catch (e) { /* not ready or no locations; ignore */ }
+}
+
+let _selectedName = null;
+
+function showUncertainty(c) {
+  clearUncertainty();
+  uncertaintyCircle = L.circle([c.lat, c.lon], {
+    radius: (c.radius_km || 0) * 1000, color: '#38bdf8', weight: 1, dashArray: '4 4',
+    fillColor: '#38bdf8', fillOpacity: 0.06, interactive: false,
+  }).addTo(gridMap);
+}
+
+function clearUncertainty() {
+  if (uncertaintyCircle) { gridMap.removeLayer(uncertaintyCircle); uncertaintyCircle = null; }
 }
 
 // ── Live constraint coloring ──────────────────────────────────────────────────
 
 function updateMapColors(constraints) {
-  if (!linesLayer) return;
+  if (!locationsLayer) return;
 
-  const pctMap = {};
+  const live = {};
   for (const c of constraints) {
-    if (c.constraint_name) pctMap[c.constraint_name.toLowerCase()] = c.pct_of_limit;
+    if (c.constraint_name && c.shadow_price) live[c.constraint_name.toLowerCase()] = c;
   }
 
-  linesLayer.eachLayer(layer => {
-    const name = (layer.feature?.properties?.constraint_name || '').toLowerCase();
-    const kv   = layer.feature?.properties?.voltage_kv ?? 115;
-    const w    = kv >= 345 ? 2.5 : kv >= 230 ? 1.8 : 1.2;
-    const pct  = pctMap[name];
-    const col  = loadingColor(pct) || voltageColor(kv);
-    layer.setStyle({
-      color: col,
-      weight: pct >= 85 ? w * 2 : w,
-      opacity: pct != null ? 0.95 : 0.6,
-    });
-  });
+  let missing = false;
+  for (const key of Object.keys(live)) if (!constraintMarkers[key]) missing = true;
+  if (missing) refreshLiveLocations();
+
+  for (const [key, { marker, props }] of Object.entries(constraintMarkers)) {
+    const c = live[key];
+    if (c) {
+      const col = shadowPriceColor(c.shadow_price);
+      marker.setStyle({ radius: 8, color: '#0f172a', fillColor: col, weight: 1.5, opacity: 1, fillOpacity: 0.9 });
+      marker.bringToFront();
+      marker.setTooltipContent(
+        `<b>${props.constraint_name}</b><br>$${Math.round(c.shadow_price)}/MWh · ${c.state || ''}` +
+        `<br>${String(props.method).replace('_', ' ')} · ±${Math.round(props.radius_km)} km`
+      );
+    } else {
+      marker.setStyle(IDLE_STYLE);
+    }
+  }
 }
 
 // ── SF Zone Heatmap overlay ───────────────────────────────────────────────────
@@ -274,14 +281,8 @@ function clearHeatmap() {
   }
   clearHeatmapLegend();
 
-  // Reset line styles
-  if (linesLayer) {
-    linesLayer.eachLayer(l => {
-      const kv = l.feature?.properties?.voltage_kv ?? 115;
-      const w  = kv >= 345 ? 2.5 : kv >= 230 ? 1.8 : 1.2;
-      l.setStyle({ color: voltageColor(kv), weight: w, opacity: 0.6 });
-    });
-  }
+  clearUncertainty();
+  _selectedName = null;
 }
 
 // ── Legend ────────────────────────────────────────────────────────────────────
@@ -337,13 +338,14 @@ function clearHeatmapLegend() {
   if (legend) legend.remove();
 }
 
-// ── Fallback line highlight (kept for backward compat) ────────────────────────
+// ── Highlight the selected constraint on the map ─────────────────────────────
 
 function highlightMapLine(constraintName) {
-  const key   = constraintName.toLowerCase();
-  const layer = constraintLineIndex[key];
-  if (layer) {
-    layer.setStyle({ color: '#f59e0b', weight: 5, opacity: 1 });
-    gridMap.fitBounds(layer.getBounds(), { padding: [40, 40] });
-  }
+  const entry = constraintMarkers[constraintName.toLowerCase()];
+  if (!entry) return;
+  _selectedName = constraintName;
+  const { props } = entry;
+  showUncertainty(props);
+  entry.marker.bringToFront();
+  gridMap.fitBounds(uncertaintyCircle.getBounds(), { padding: [60, 60], maxZoom: 8 });
 }

@@ -73,6 +73,7 @@ async def get_live_constraints(
                 interval=r.get("interval", interval.interval),
                 constraint_name=r.get("constraint_name", ""),
                 canonical_id=r.get("canonical_id"),
+                element_key=r.get("element_key"),
                 shadow_price=float(r.get("shadow_price", 0)),
                 limit_mw=r.get("limit_mw"),
                 monitored_mw=r.get("monitored_mw"),

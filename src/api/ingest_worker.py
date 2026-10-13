@@ -124,7 +124,7 @@ async def ingest_once(iso: str = "spp") -> bool:
 
     Returns True if data was successfully ingested, False on error.
     """
-    from src.analysis.constraint_normalizer import normalize_constraints_df
+    from src.analysis.constraint_identity import add_identity_columns
     iso = iso.lower()
 
     logger.info(f"[{iso.upper()}] Ingest cycle starting...")
@@ -248,7 +248,9 @@ async def ingest_once(iso: str = "spp") -> bool:
 
     # ── Step 3: Constraint name normalization ────────────────────────────
     if "constraint_name" in constraints_df.columns:
-        constraints_df = normalize_constraints_df(constraints_df, name_col="constraint_name")
+        # Identity comes from the structured Monitored/Contingent Facility columns. (The old name
+        # normalizer parsed opaque ids like TMP527_28137 into nonsense endpoints and stored them.)
+        constraints_df = add_identity_columns(constraints_df)
 
     # ── Step 4: Build interval snapshot ─────────────────────────────────
     if "interval" in constraints_df.columns:
@@ -323,6 +325,10 @@ async def ingest_once(iso: str = "spp") -> bool:
             disp_records.append({
                 "interval": row["interval"],
                 "constraint_name": name,
+                "canonical_id": row.get("constraint_key") if pd.notnull(row.get("constraint_key")) else None,
+                "element_key": row.get("element_key") if pd.notnull(row.get("element_key")) else None,
+                "monitored_facility": row.get("monitored_facility") if pd.notnull(row.get("monitored_facility")) else None,
+                "contingent_facility": row.get("contingent_facility") if pd.notnull(row.get("contingent_facility")) else None,
                 "shadow_price": float(row.get("shadow_price", 0.0)),
                 "limit_mw": float(row.get("limit_mw")) if pd.notnull(row.get("limit_mw")) else None,
                 "monitored_mw": float(row.get("monitored_mw")) if pd.notnull(row.get("monitored_mw")) else None,
@@ -352,6 +358,12 @@ async def ingest_once(iso: str = "spp") -> bool:
         constraints_df=constraints_df,
         lmp_df=lmp_df if not lmp_df.empty else pd.DataFrame(),
     )
+
+    # Borrow provisional shift factors for binding constraints that have none (same-element siblings)
+    try:
+        await asyncio.to_thread(iso_cache.refresh_priors, list(shadow_prices))
+    except Exception as e:
+        logger.warning(f"[{iso.upper()}] sibling-prior refresh failed (non-fatal): {e}")
 
     # ── Step 6: Write to DuckDB (non-blocking) ──────────────────────────
     try:

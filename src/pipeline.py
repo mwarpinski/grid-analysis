@@ -327,7 +327,16 @@ class Pipeline:
         return constraints_df, lmp_df
 
     def _step_normalize(self, constraints_df: pd.DataFrame) -> pd.DataFrame:
-        """Add normalized constraint name columns."""
+        """
+        Add identity columns.  SPP's Monitored/Contingent Facility columns identify the element and the
+        outage; the legacy name parser is only a fallback for files that lack them (it cannot decode
+        SPP's opaque flowgate ids such as TMP527_28137).
+        """
+        if "monitored_facility" in constraints_df.columns:
+            from .analysis.constraint_identity import add_identity_columns
+
+            return add_identity_columns(constraints_df)
+
         from .analysis.constraint_normalizer import normalize_constraints_df
 
         return normalize_constraints_df(
@@ -387,40 +396,41 @@ class Pipeline:
         return solution.to_dataframe()
 
     def _step_locate_constraints(self, constraints_df: pd.DataFrame) -> None:
-        """Map canonical constraints to EIA GeoJSON features."""
-        from .analysis.constraint_locator import ConstraintLocator
+        """
+        Attach map locations from the public-data crosswalk built by scripts/build_geo_crosswalk.py
+        (station anchors, then shift-factor triangulation; regional accuracy, see
+        src/analysis/geo_crosswalk.py).  Writes ``constraint_map.geojson`` with a method, quality and
+        uncertainty radius per constraint.
+        """
+        import json
 
-        geojson_path = self.config.data_dir / "spp_only_lines.geojson"
-        if not geojson_path.exists():
+        table_path = Path(__file__).parent / "data" / "geo" / "constraint_locations.parquet"
+        if not table_path.exists():
             logger.warning(
-                f"spp_only_lines.geojson not found at {geojson_path}. "
-                "Skipping GeoJSON mapping. Run src/analysis/spp_filters.py first."
+                f"{table_path} not found. Run scripts/build_geo_crosswalk.py first. Skipping location mapping."
             )
             return
 
-        locator = ConstraintLocator(geojson_path=geojson_path)
-
-        # Get unique canonical constraints
-        canonical_constraints = (
-            constraints_df[
-                ["canonical_id", "canonical_name", "from_sub", "to_sub", "voltage_kv"]
-            ]
-            .drop_duplicates("canonical_id")
-            .to_dict("records")
-        )
-
-        results = locator.locate_many(canonical_constraints)
-        located = [r for r in results if r.feature_index is not None]
+        table = pd.read_parquet(table_path)
+        names = constraints_df["constraint_name"].unique()
+        hit = table[table["constraint_name"].isin(names)]
+        placed = hit[hit["method"] != "unplaced"]
 
         output_path = self.config.output_dir / "constraint_map.geojson"
-        locator.export_located_constraints(results, output_path)
-
-        n_total = len(results)
-        n_located = len(located)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [float(r.lon), float(r.lat)]},
+                "properties": {"constraint_name": r.constraint_name, "method": r.method,
+                               "quality": r.quality, "radius_km": round(float(r.radius_km), 0)},
+            } for r in placed.itertuples()],
+        }))
         logger.info(
-            f"Located {n_located}/{n_total} constraints in EIA GeoJSON "
-            f"({100*n_located/max(1,n_total):.1f}% match rate). "
-            f"GeoJSON → {output_path}"
+            f"Located {len(placed)}/{len(names)} constraints "
+            f"({100 * len(placed) / max(1, len(names)):.1f}%; {len(names) - len(hit)} not in the build table). "
+            f"Methods: {placed['method'].value_counts().to_dict()}. GeoJSON → {output_path}"
         )
 
     def _step_export(

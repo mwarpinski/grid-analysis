@@ -1,4 +1,11 @@
 """
+DEPRECATED — superseded by src/analysis/geo_crosswalk.py (scripts/build_geo_crosswalk.py).
+
+This locator matches substation NAMES against a line dataset.  SPP's names are EMS abbreviations that
+rarely appear in public GIS data, and the file it was written for (spp_only_lines.geojson) is a
+synthetic schematic, so it located 0 of 183 real constraints even when fed the real equipment names.
+Kept only so old imports keep working.
+
 Constraint Locator — Maps Canonical SPP Constraints to EIA GeoJSON Lines.
 
 Given a canonical constraint (from_sub, to_sub, voltage_kv), this module

@@ -185,3 +185,74 @@ def test_fit_with_da_gives_da_only_constraints_shift_factors():
     # the RT constraints keep their shift factors
     assert cache.solution_with_da.get("NODE_00", "LN ALPHA - BETA") == pytest.approx(
         true["NODE_00"]["LN ALPHA - BETA"], abs=0.02)
+
+
+def test_sibling_prior_borrows_from_the_same_element_and_is_labelled():
+    """A newly binding constraint with no shift factors borrows its sibling's (oriented) vector."""
+    from src.analysis.multi_constraint_sf import ShiftFactorSolution
+
+    c = SFCache()
+    sol = ShiftFactorSolution()
+    sol._flat = {("N1", "SIB"): 0.4, ("N2", "SIB"): -0.2}
+    c.solution = sol
+    # SIB and NEWC are the SAME line under different contingencies; NEWC lists the opposite direction
+    frame = pd.DataFrame({
+        "constraint_name": ["SIB", "NEWC", "OTHER"],
+        "monitored_facility": ["LN A - B", "LN B - A", "LN X - Y"],
+        "contingent_facility": ["SPS:P Q:345:1:1", "SPS:R S:345:1:1", "BASE"],
+    })
+    c._learn_identity(frame)
+
+    assert c.refresh_priors(["NEWC", "OTHER", "SIB"]) == 1        # only NEWC has a sibling; SIB is fitted
+    assert c.provisional[("N1", "NEWC")] == pytest.approx(-0.4)   # direction flipped
+    assert c.provisional[("N2", "NEWC")] == pytest.approx(0.2)
+    assert ("N1", "OTHER") not in c.provisional
+    assert all(k[1] != "SIB" for k in c.provisional)
+
+
+def test_mcc_endpoint_keeps_fitted_and_prior_estimates_apart(monkeypatch):
+    from fastapi.testclient import TestClient
+    from src.analysis.multi_constraint_sf import ShiftFactorSolution
+    from src.api.routers import mcc as mcc_router
+    from src.api.server import app
+
+    c = MultiISOSFCache()
+    spp = c.for_iso("spp")
+    sol = ShiftFactorSolution()
+    sol._flat = {("N1", "FITTED"): 0.5}
+    spp.solution = sol
+    spp.provisional = {("N1", "BORROWED"): 0.1}
+    spp.latest_interval = type("L", (), {"shadow_prices": {"FITTED": -100.0, "BORROWED": -100.0, "NONE": -200.0}})()
+    spp.last_updated = datetime.now()
+    monkeypatch.setattr(mcc_router, "cache", c)
+
+    j = TestClient(app).get("/api/v1/mcc", params={"node": "N1"}).json()
+
+    assert j["mcc"] == pytest.approx(0.5 * -100.0)                       # fitted only
+    assert j["mcc_with_priors"] == pytest.approx(0.5 * -100.0 + 0.1 * -100.0)
+    assert j["shadow_price_coverage"] == pytest.approx(100 / 400)
+    assert j["shadow_price_coverage_with_priors"] == pytest.approx(200 / 400)
+    src = {r["constraint"]: r["source"] for r in j["shadow_prices_used"]}
+    assert src == {"FITTED": "fitted", "BORROWED": "sibling_prior", "NONE": None}
+
+
+def test_ingest_populates_canonical_ids_from_the_structured_facility_columns(monkeypatch):
+    interval = pd.Timestamp("2026-10-10 12:00:00")
+    monkeypatch.setattr("src.api.sf_cache.cache", MultiISOSFCache())
+    monkeypatch.setattr(ingest_worker, "cache", __import__("src.api.sf_cache", fromlist=["cache"]).cache)
+    monkeypatch.setattr(ingest_worker, "_last_da_scraped_date", datetime.now().date())
+    monkeypatch.setattr(ingest_worker, "broadcast", lambda msg: asyncio.sleep(0))
+    rt = _fake_rt_constraints(interval)
+    rt["monitored_facility"] = ["LN TEKAMHO - SUB1226", "LN FORMAN - FORMNWA", "LN A - B"]
+    rt["contingent_facility"] = ["OPPD:SUB3456 NEBRCTY:345:1:11", "BASE", "BASE"]
+    lmp = pd.DataFrame({"interval": [interval], "settlement_location": ["N1"], "mcc": [1.0]})
+
+    with patch("src.scrapers.spp_rt_constraints_scraper.RTConstraintsScraper.fetch_data", return_value=rt), \
+         patch("src.scrapers.spp_rtlmp_scraper.RTBMLMPScraper.fetch_data", return_value=lmp), \
+         patch("src.storage.duckdb_store.DuckDBStore.write_interval"), \
+         patch("src.storage.duckdb_store.DuckDBStore.query_constraints", return_value=pd.DataFrame()):
+        asyncio.run(ingest_worker.ingest_once("spp"))
+
+    recs = {r["constraint_name"]: r for r in ingest_worker.cache.for_iso("spp").latest_interval.constraints}
+    assert recs["C_BINDING"]["canonical_id"] == "LN|SUB1226|TEKAMHO#C|NEBRCTY,SUB3456|345"
+    assert recs["C_BINDING"]["element_key"] == "LN|SUB1226|TEKAMHO"

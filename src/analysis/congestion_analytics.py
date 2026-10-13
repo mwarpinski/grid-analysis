@@ -250,6 +250,47 @@ def fit_shift_factors_rt_da(
     return calculate_shift_factors(lmp, bc, min_intervals=min_intervals, **kwargs)
 
 
+def sibling_prior(
+    sf_flat: Mapping[Tuple[str, str], float],
+    targets: Iterable[str],
+    name_key: Mapping[str, str],
+    orientation: Mapping[str, int],
+    shrink: float = 1.0,
+) -> Dict[Tuple[str, str], float]:
+    """
+    Provisional shift factors for constraints that have none, borrowed from their SIBLINGS: other
+    constraints on the same physical element (a different contingency, or the other market's name).
+
+    Same element under another contingency correlates with ~0.75 across nodes (aliases ~0.9), so a
+    sibling is a far better guess than nothing for a constraint that has just started binding.  Each
+    sibling's vector is oriented to a common direction, averaged, then oriented back to the target's
+    own direction and multiplied by ``shrink`` (< 1 pulls the guess toward zero, since the magnitude
+    can differ by contingency).  Returns ``{(node, target): sf}`` for targets with at least one
+    sibling; the caller decides whether to use it (see scripts/identity_report.py for the measured
+    benefit).
+    """
+    sf = _sf_matrix(sf_flat)
+    if sf.empty:
+        return {}
+    element = {n: k.split("#")[0] for n, k in name_key.items()}
+    by_element: Dict[str, List[str]] = {}
+    for c in sf.columns:
+        if c in element:
+            by_element.setdefault(element[c], []).append(c)
+    out: Dict[Tuple[str, str], float] = {}
+    for t in targets:
+        if t in sf.columns or t not in element:
+            continue
+        sibs = [c for c in by_element.get(element[t], []) if c != t]
+        if not sibs:
+            continue
+        oriented = sf[sibs].mul(pd.Series({c: orientation.get(c, 1) for c in sibs}), axis=1)
+        guess = oriented.mean(axis=1) * orientation.get(t, 1) * shrink
+        for node, v in guess.dropna().items():
+            out[(node, t)] = float(v)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Constraint behaviour
 # ---------------------------------------------------------------------------

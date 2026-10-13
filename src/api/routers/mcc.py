@@ -61,29 +61,42 @@ async def get_mcc(
 
     mcc = iso_cache.solution.compute_mcc(node, shadow_prices)
 
-    # Build per-constraint contribution breakdown
+    # Build per-constraint contribution breakdown. Constraints with no fitted shift factor may have a
+    # provisional one borrowed from a sibling constraint on the same element; it is labelled and kept
+    # out of `mcc` (fitted only) so the two can be told apart.
     contributions: List[MCCContribution] = []
+    prior_extra = 0.0
     for constraint, sp in shadow_prices.items():
         sf = iso_cache.solution.get(node, constraint)
+        source = "fitted" if sf is not None else None
+        if sf is None:
+            sf = iso_cache.provisional.get((node, constraint))
+            if sf is not None:
+                source = "sibling_prior"
+                prior_extra += sf * sp
         contrib = (sf * sp) if sf is not None else 0.0
         contributions.append(MCCContribution(
             constraint=constraint,
             shadow_price=sp,
             shift_factor=sf,
             contribution=contrib,
+            source=source,
         ))
 
     # Sort by |contribution| descending
     contributions.sort(key=lambda x: abs(x.contribution), reverse=True)
 
     total_mag = sum(abs(c.shadow_price) for c in contributions)
+    fitted_mag = sum(abs(c.shadow_price) for c in contributions if c.source == "fitted")
     covered_mag = sum(abs(c.shadow_price) for c in contributions if c.shift_factor is not None)
 
     return MCCResponse(
         node=node,
         mcc=round(mcc, 4),
-        n_constraints_used=sum(1 for c in contributions if c.shift_factor is not None),
-        shadow_price_coverage=round(covered_mag / total_mag, 4) if total_mag else None,
+        mcc_with_priors=round(mcc + prior_extra, 4),
+        n_constraints_used=sum(1 for c in contributions if c.source == "fitted"),
+        shadow_price_coverage=round(fitted_mag / total_mag, 4) if total_mag else None,
+        shadow_price_coverage_with_priors=round(covered_mag / total_mag, 4) if total_mag else None,
         shadow_prices_used=contributions,
     )
 
